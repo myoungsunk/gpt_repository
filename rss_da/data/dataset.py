@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 import numpy as np
+import pandas as pd
 import torch
 from torch.utils.data import Dataset
 
 ArrayLike = Sequence[float]
+PathLike = Union[str, Path]
 
 
 @dataclass
@@ -100,3 +103,73 @@ def collate_samples(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Ten
 
 
 __all__ = ["Sample", "RssDoADataset", "collate_samples"]
+
+
+def load_standardized_csv(
+    path: PathLike,
+    stage: str,
+    prefer_absolute: bool = True,
+) -> List[Sample]:
+    """prepare_datasets_v2.py 결과 CSV를 Sample 리스트로 변환한다."""
+
+    df = pd.read_csv(path)
+    stage = str(stage)
+    if stage not in {"1", "2.5"}:
+        raise ValueError(f"Unsupported stage: {stage}")
+
+    samples: List[Sample] = []
+    rss_cols = [
+        "rss_a_p1_rel_db",
+        "rss_b_p1_rel_db",
+        "rss_a_p2_rel_db",
+        "rss_b_p2_rel_db",
+    ]
+
+    for _, row in df.iterrows():
+        has_abs = (
+            prefer_absolute
+            and pd.notna(row.get("c1_dbm"))
+            and pd.notna(row.get("c2_dbm"))
+        )
+        c1 = float(row["c1_dbm"] if has_abs else row["c1_rel_db"])
+        c2 = float(row["c2_dbm"] if has_abs else row["c2_rel_db"])
+        power1 = np.clip(10 ** (c1 / 10.0), 1e-12, None)
+        power2 = np.clip(10 ** (c2 / 10.0), 1e-12, None)
+        delta = c2 - c1
+        sum_db = c1 + c2
+        log_ratio = float(np.log(np.clip(power2 / power1, 1e-12, None)))
+        z5d = [c1, c2, delta, sum_db, log_ratio]
+
+        mask = float(row.get("mask_4rss_is_gt", 0.0))
+        theta = [float(row["theta1_rad"]), float(row["theta2_rad"])]
+
+        four_rss_values: Optional[List[float]]
+        if stage == "1":
+            rss_raw = [row.get(col, np.nan) for col in rss_cols]
+            if all(pd.isna(value) for value in rss_raw):
+                four_rss_values = None
+            else:
+                four_array = np.asarray(rss_raw, dtype=np.float32)
+                if has_abs:
+                    offset_a = c1 - float(row["c1_rel_db"])
+                    offset_b = c2 - float(row["c2_rel_db"])
+                    four_array[:2] = four_array[:2] + offset_a
+                    four_array[2:] = four_array[2:] + offset_b
+                four_rss_values = four_array.tolist()
+        else:
+            four_rss_values = None
+
+        samples.append(
+            Sample(
+                z5d=z5d,
+                c_meas=[c1, c2],
+                theta_gt=theta,
+                four_rss=four_rss_values,
+                mask_4rss_is_gt=mask,
+            )
+        )
+
+    return samples
+
+
+__all__.append("load_standardized_csv")
