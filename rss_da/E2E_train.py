@@ -3,12 +3,9 @@ from __future__ import annotations
 
 import argparse
 import logging
-import pickle
 import sys
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
-
-import numpy as np
+from typing import Dict, Iterable, List, Optional
 
 from torch.utils.data import DataLoader
 
@@ -64,51 +61,12 @@ def _load_samples_from_root(
     return samples
 
 
-def _compute_z5d_stats(samples: List[Sample]) -> Tuple[np.ndarray, np.ndarray]:
-    matrix = np.stack([np.asarray(sample.z5d, dtype=np.float32) for sample in samples], axis=0)
-    mean = matrix.mean(axis=0)
-    std = matrix.std(axis=0)
-    std = np.where(std < 1e-6, 1.0, std)
-    return mean, std
-
-
-def _apply_standardization(
-    dataset: RssDoADataset,
-    samples: List[Sample],
-    scaler_path: Optional[Path],
-    fit: bool,
-) -> None:
-    if fit:
-        mean, std = _compute_z5d_stats(samples)
-        dataset.set_standardization(mean, std)
-        if scaler_path is not None:
-            scaler_path.parent.mkdir(parents=True, exist_ok=True)
-            with scaler_path.open("wb") as fp:
-                pickle.dump({"mean": mean.tolist(), "std": std.tolist()}, fp)
-            logging.info("Saved z5d scaler to %s", scaler_path.as_posix())
-    else:
-        loaded = False
-        if scaler_path is not None and scaler_path.exists():
-            with scaler_path.open("rb") as fp:
-                payload = pickle.load(fp)
-            dataset.set_standardization(np.asarray(payload["mean"], dtype=np.float32), np.asarray(payload["std"], dtype=np.float32))
-            logging.info("Loaded z5d scaler from %s", scaler_path.as_posix())
-            loaded = True
-        if not loaded:
-            logging.warning("Scaler not found. Fitting on-the-fly for current dataset.")
-            mean, std = _compute_z5d_stats(samples)
-            dataset.set_standardization(mean, std)
-
-
 def _build_dataloader(
     stage: str,
     batch_size: int,
     data_root: Path,
     stage1_file: str,
     stage25_file: str,
-    cfg: Config,
-    scaler_path: Optional[Path],
-    fit_scaler: bool,
 ) -> DataLoader:
     samples = _load_samples_from_root(stage, data_root, stage1_file, stage25_file)
     if samples is None:
@@ -122,7 +80,6 @@ def _build_dataloader(
     else:
         logging.info("Loaded %d samples for stage %s", len(samples), stage)
     dataset = RssDoADataset(list(samples), stage=stage, modality_dropout_p=0.0, training=True)
-    _apply_standardization(dataset, samples, scaler_path, fit_scaler)
     loader = DataLoader(
         dataset,
         batch_size=batch_size,
@@ -148,52 +105,32 @@ def _stage1_loop(
 ) -> Stage1Trainer:
     trainer = Stage1Trainer(cfg)
     logging.info("Stage-1 trainer initialized on device: %s", trainer.device)
-    scaler_path = log_dir / cfg.data.scaler_dir / "stage1" / "z5d_scaler.pkl"
-    loader = _build_dataloader(
-        "1",
-        cfg.train.batch_size,
-        data_root,
-        stage1_file,
-        stage25_file,
-        cfg,
-        scaler_path,
-        fit_scaler=True,
-    )
-    trainer.scaler_path = scaler_path  # type: ignore[attr-defined]
+    loader = _build_dataloader("1", cfg.train.batch_size, data_root, stage1_file, stage25_file)
     logger = Logger(log_dir)
     global_step = 0
     try:
         for epoch in range(epochs):
             logging.info("[Stage-1] Starting epoch %d/%d", epoch + 1, epochs)
             for batch in loader:
-                outputs = trainer.train_step(batch, enable_pass1=epoch > 0)
+                outputs = trainer.train_step(batch)
                 metrics = {
                     "loss_total": outputs.loss_total,
                     "loss_sup0": outputs.loss_sup0,
                     "loss_sup1": outputs.loss_sup1,
-                    "loss_data": outputs.loss_data,
                     "loss_mix": outputs.loss_mix,
                     "loss_phys": outputs.loss_phys,
                     "deg_rmse": outputs.deg_rmse,
                     "kappa_mean": outputs.kappa_mean,
-                    "mix_weight": outputs.mix_weight,
-                    "mix_weighted": outputs.mix_weighted,
                 }
                 if global_step % cfg.train.log_interval == 0:
                     _log_metrics(logger, global_step, "train", metrics)
                     logging.info(
-                        (
-                            "[Stage-1][step=%d] loss=%.4f sup0=%.4f sup1=%.4f data=%.4f mix_raw=%.4f "
-                            "mix_w=%.6f mix_weighted=%.4f phys=%.4f degRMSE=%.3f"
-                        ),
+                        "[Stage-1][step=%d] loss=%.4f sup0=%.4f sup1=%.4f mix=%.4f phys=%.4f degRMSE=%.3f",
                         global_step,
                         metrics["loss_total"],
                         metrics["loss_sup0"],
                         metrics["loss_sup1"],
-                        metrics["loss_data"],
                         metrics["loss_mix"],
-                        metrics["mix_weight"],
-                        metrics["mix_weighted"],
                         metrics["loss_phys"],
                         metrics["deg_rmse"],
                     )
@@ -211,20 +148,10 @@ def _stage25_loop(
     data_root: Path,
     stage1_file: str,
     stage25_file: str,
-    scaler_path: Optional[Path],
 ) -> Stage25Trainer:
     trainer = Stage25Trainer(cfg, teacher_modules=teacher.modules())
     logging.info("Stage-2.5 trainer initialized on device: %s", trainer.device)
-    loader = _build_dataloader(
-        "2.5",
-        cfg.train.batch_size,
-        data_root,
-        stage1_file,
-        stage25_file,
-        cfg,
-        scaler_path,
-        fit_scaler=False,
-    )
+    loader = _build_dataloader("2.5", cfg.train.batch_size, data_root, stage1_file, stage25_file)
     logger = Logger(log_dir)
     global_step = 0
     try:
@@ -236,30 +163,21 @@ def _stage25_loop(
                     "loss_total": outputs.loss_total,
                     "loss_sup": outputs.loss_sup,
                     "loss_kd": outputs.loss_kd,
-                    "loss_data": outputs.loss_data,
                     "loss_mix": outputs.loss_mix,
                     "loss_phys": outputs.loss_phys,
                     "loss_align": outputs.loss_align,
                     "deg_rmse": outputs.deg_rmse,
                     "kappa_mean": outputs.kappa_mean,
-                    "mix_weight": outputs.mix_weight,
-                    "mix_weighted": outputs.mix_weighted,
                 }
                 if global_step % cfg.train.log_interval == 0:
                     _log_metrics(logger, global_step, "train", metrics)
                     logging.info(
-                        (
-                            "[Stage-2.5][step=%d] loss=%.4f sup=%.4f kd=%.4f data=%.4f mix_raw=%.4f "
-                            "mix_w=%.6f mix_weighted=%.4f align=%.4f degRMSE=%.3f"
-                        ),
+                        "[Stage-2.5][step=%d] loss=%.4f sup=%.4f kd=%.4f mix=%.4f align=%.4f degRMSE=%.3f",
                         global_step,
                         metrics["loss_total"],
                         metrics["loss_sup"],
                         metrics["loss_kd"],
-                        metrics["loss_data"],
                         metrics["loss_mix"],
-                        metrics["mix_weight"],
-                        metrics["mix_weighted"],
                         metrics["loss_align"],
                         metrics["deg_rmse"],
                     )
@@ -275,15 +193,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data_root", type=str, default="./data")
     parser.add_argument("--stage1_file", type=str, default="stage1_rel.csv")
     parser.add_argument("--stage25_file", type=str, default="stage25_rel.csv")
-    parser.add_argument(
-        "--input_scale",
-        type=str,
-        default="relative_db",
-        choices=["relative_db", "absolute_dbm"],
-        help="Combined power scale used by datasets",
-    )
-    parser.add_argument("--mix_warmup_steps", type=int, default=500)
-    parser.add_argument("--mix_ramp_steps", type=int, default=1500)
     parser.add_argument("--use_m3", action="store_true")
     parser.add_argument("--use_coral", action="store_true")
     parser.add_argument("--use_dann", action="store_true")
@@ -342,9 +251,6 @@ def main() -> None:
     cfg.train.epochs = args.epochs
     cfg.train.batch_size = args.batch_size
     cfg.train.log_dir = args.logdir
-    cfg.data.input_scale = args.input_scale
-    cfg.data.mix_warmup_steps = args.mix_warmup_steps
-    cfg.data.mix_ramp_steps = args.mix_ramp_steps
     data_root = Path(args.data_root)
     if not data_root.exists():
         logging.warning("data_root %s does not exist. Synthetic data will be used.", data_root)
@@ -360,11 +266,9 @@ def main() -> None:
         _stage1_loop(cfg, args.epochs, log_dir, data_root, stage1_file, stage25_file)
     else:
         logging.info("Preparing Stage-1 teacher for Stage-2.5 training")
-        teacher_logdir = log_dir / "stage1_teacher"
-        teacher = _stage1_loop(cfg, 1, teacher_logdir, data_root, stage1_file, stage25_file)
-        scaler_path = getattr(teacher, "scaler_path", teacher_logdir / cfg.data.scaler_dir / "stage1" / "z5d_scaler.pkl")
+        teacher = _stage1_loop(cfg, 1, log_dir / "stage1_teacher", data_root, stage1_file, stage25_file)
         logging.info("Starting Stage-2.5 training for %d epochs", args.epochs)
-        _stage25_loop(cfg, args.epochs, log_dir, teacher, data_root, stage1_file, stage25_file, scaler_path)
+        _stage25_loop(cfg, args.epochs, log_dir, teacher, data_root, stage1_file, stage25_file)
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ from typing import Dict, Optional
 import torch
 import torch.nn.functional as F
 
-from rss_da.physics.combine import combine_r4_to_c
+from rss_da.physics.combine import combine_r4_rel_to_c_rel, combine_r4_to_c
 from rss_da.physics.pathloss import PathlossConstraint
 
 
@@ -22,6 +22,8 @@ def recon_loss(
     r4_hat_dbm: torch.Tensor,  # torch.FloatTensor[B,4]
     r4_gt_dbm: Optional[torch.Tensor] = None,  # torch.FloatTensor[B,4]
     c_meas_dbm: Optional[torch.Tensor] = None,  # torch.FloatTensor[B,2]
+    c_meas_rel_db: Optional[torch.Tensor] = None,  # torch.FloatTensor[B,2]
+    input_scale: str = "relative_db",
     physics_ctx: Optional[Dict[str, object]] = None,
 ) -> Dict[str, torch.Tensor]:
     """전방 일관성 및 물리 제약 손실."""
@@ -30,11 +32,19 @@ def recon_loss(
         raise ValueError("r4_hat_dbm must have shape [B,4]")
     losses: Dict[str, torch.Tensor] = {}
 
-    if c_meas_dbm is not None:
-        c_hat = combine_r4_to_c(r4_hat_dbm)  # torch.FloatTensor[B,2]
-        losses["mix"] = _safe_mse(c_hat, c_meas_dbm)
+    scale = input_scale.lower()
+    if scale == "relative_db":
+        if c_meas_rel_db is not None and c_meas_rel_db.numel() > 0:
+            c_hat_rel = combine_r4_rel_to_c_rel(r4_hat_dbm)
+            losses["mix"] = _safe_mse(c_hat_rel, c_meas_rel_db)
+        else:
+            losses["mix"] = torch.zeros(1, device=r4_hat_dbm.device)
     else:
-        losses["mix"] = torch.zeros(1, device=r4_hat_dbm.device)
+        if c_meas_dbm is not None:
+            c_hat = combine_r4_to_c(r4_hat_dbm)  # torch.FloatTensor[B,2]
+            losses["mix"] = _safe_mse(c_hat, c_meas_dbm)
+        else:
+            losses["mix"] = torch.zeros(1, device=r4_hat_dbm.device)
 
     if r4_gt_dbm is not None and r4_gt_dbm.numel() > 0:
         losses["data"] = _safe_mse(r4_hat_dbm, r4_gt_dbm)

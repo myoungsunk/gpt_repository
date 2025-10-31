@@ -30,7 +30,7 @@ class TrainConfig:
     ema_decay: float = 0.99
     dropout_p: float = 0.1
     epochs: int = 50
-    grad_clip: Optional[float] = 5.0
+    grad_clip: Optional[float] = 1.0
     use_m3: bool = False
     use_coral: bool = False
     use_dann: bool = False
@@ -42,6 +42,7 @@ class TrainConfig:
     checkpoint_dir: str = "./checkpoints"
     log_dir: str = "./logs"
     seed: int = 42
+    m2_head_lr_scale: float = 2.0
 
 
 @dataclass
@@ -55,6 +56,10 @@ class DataConfig:
     val_split: str = "val"
     test_split: str = "test"
     shuffle: bool = True
+    input_scale: str = "relative_db"  # {"relative_db", "absolute_dbm"}
+    mix_warmup_steps: int = 500
+    mix_ramp_steps: int = 1500
+    scaler_dir: str = "meta"
 
 
 @dataclass

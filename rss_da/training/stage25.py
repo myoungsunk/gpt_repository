@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import chain
-from typing import Dict, Iterable, Optional
+from typing import Dict, Optional
 
 import torch
 import torch.nn as nn
@@ -29,11 +29,14 @@ class Stage25Outputs:
     loss_total: float
     loss_sup: float
     loss_kd: float
+    loss_data: float
     loss_mix: float
     loss_phys: float
     loss_align: float
     deg_rmse: float
     kappa_mean: float
+    mix_weight: float
+    mix_weighted: float
 
 
 def _ensure_two_dim(tensor: torch.Tensor) -> torch.Tensor:
@@ -62,16 +65,28 @@ class Stage25Trainer:
         self.adapter = Adapter(latent_dim=latent_dim, phi_dim=phi_dim, dropout_p=dropout).to(self.device)
         self.decoder = DecoderD(latent_dim=latent_dim, dropout_p=dropout).to(self.device)
         self.m2 = DoAPredictor(phi_dim=phi_dim, latent_dim=latent_dim, dropout_p=dropout).to(self.device)
-        params: Iterable[nn.Parameter] = chain(
-            self.e4.parameters(),
-            self.e5.parameters(),
-            self.fuse.parameters(),
-            self.adapter.parameters(),
-            self.decoder.parameters(),
-            self.m2.parameters(),
+        base_params = list(
+            chain(
+                self.e4.parameters(),
+                self.e5.parameters(),
+                self.fuse.parameters(),
+                self.adapter.parameters(),
+                self.decoder.parameters(),
+                self.m2.backbone.parameters(),
+            )
         )
+        head_params = list(chain(self.m2.mu_head.parameters(), self.m2.kappa_head.parameters()))
+        if self.m2.logits_head is not None:
+            head_params.extend(self.m2.logits_head.parameters())
+        nn.init.constant_(self.m2.kappa_head.bias, 0.5)
         self.optimizer = optim.Adam(
-            params,
+            [
+                {"params": base_params},
+                {
+                    "params": head_params,
+                    "lr": cfg.train.learning_rate * cfg.train.m2_head_lr_scale,
+                },
+            ],
             lr=cfg.train.learning_rate,
             weight_decay=cfg.train.weight_decay,
         )
@@ -110,6 +125,8 @@ class Stage25Trainer:
             )
         )
         self.global_step = 0
+        self.mix_warmup_steps = cfg.data.mix_warmup_steps
+        self.mix_ramp_steps = cfg.data.mix_ramp_steps
 
     def _build_teacher(self, teacher_modules: Optional[Dict[str, nn.Module]]) -> Dict[str, nn.Module]:
         teacher: Dict[str, nn.Module] = {}
@@ -136,7 +153,17 @@ class Stage25Trainer:
             self.domain_classifier.train(mode)
 
     def _prepare_batch(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        return {key: value.to(self.device) for key, value in batch.items()}
+        def _to_device(value: torch.Tensor) -> torch.Tensor:
+            return value.to(self.device)
+
+        def _maybe_to_device(obj):
+            if isinstance(obj, torch.Tensor):
+                return _to_device(obj)
+            if isinstance(obj, dict):
+                return {key: _maybe_to_device(val) for key, val in obj.items()}
+            return obj
+
+        return {key: _maybe_to_device(value) for key, value in batch.items()}
 
     def _teacher_forward(self, z5d: torch.Tensor) -> Dict[str, torch.Tensor]:
         with torch.no_grad():
@@ -166,7 +193,12 @@ class Stage25Trainer:
         batch = self._prepare_batch(batch)
         z5d = batch["z5d"]
         theta_gt = batch["theta_gt"]
-        c_meas = batch["c_meas"]
+        c_meas = batch["c_meas"]  # 상대 dB
+        if self.cfg.data.input_scale != "relative_db" and "c_meas_abs" in batch:
+            c_meas = batch["c_meas_abs"]
+        c_meas_rel = batch.get("c_meas_rel")
+        if c_meas_rel is not None and c_meas_rel.numel() == 0:
+            c_meas_rel = None
         self.optimizer.zero_grad()
         mu0_s, kappa0_s, _ = self.m2(z5d, None)
         mu0_s = _ensure_two_dim(mu0_s)
@@ -181,7 +213,13 @@ class Stage25Trainer:
         mu1_s = _ensure_two_dim(mu1_s)
         kappa1_s = _ensure_two_dim(kappa1_s)
         loss_sup = von_mises_nll(mu1_s, kappa1_s, theta_gt)
-        recon = recon_loss(r4_hat_s, r4_gt_dbm=None, c_meas_dbm=c_meas)
+        recon = recon_loss(
+            r4_hat_s,
+            r4_gt_dbm=None,
+            c_meas_dbm=c_meas,
+            c_meas_rel_db=c_meas_rel,
+            input_scale=self.cfg.data.input_scale,
+        )
         teacher_out = self._teacher_forward(z5d)
         gate = torch.sigmoid(teacher_out["kappa1"].mean(dim=-1, keepdim=True))
         kd_losses = kd_loss_bundle(
@@ -219,10 +257,12 @@ class Stage25Trainer:
                 domain_labels=domain_labels,
                 class_logits=class_logits,
             )
+        mix_scale = self._mix_weight()
+        mix_weight = self.cfg.train.loss_weights[2] * mix_scale
         base_losses = {
             "sup": loss_sup,
             "kd": kd_losses["kd_total"],
-            "mix": recon["mix"],
+            "mix": mix_weight * (recon["mix"] + recon["data"]),
             "phys": recon["phys"],
         }
         total_loss = None
@@ -237,7 +277,7 @@ class Stage25Trainer:
             total_loss = (
                 w_sup * base_losses["sup"]
                 + w_kd * base_losses["kd"]
-                + w_mix * (base_losses["mix"] + recon["data"])
+                + w_mix * base_losses["mix"]
                 + w_phys * base_losses["phys"]
             )
         w_align = self.cfg.train.loss_weights[3]
@@ -273,13 +313,24 @@ class Stage25Trainer:
             loss_total=total_loss.detach().item(),
             loss_sup=loss_sup.detach().item(),
             loss_kd=kd_losses["kd_total"].detach().item(),
+            loss_data=recon["data"].detach().item(),
             loss_mix=recon["mix"].detach().item(),
             loss_phys=recon["phys"].detach().item(),
             loss_align=align_loss.detach().item(),
             deg_rmse=deg_rmse,
             kappa_mean=kappa1_s.detach().mean().item(),
+            mix_weight=float(mix_weight),
+            mix_weighted=(mix_weight * recon["mix"]).detach().item(),
         )
         return outputs
+
+    def _mix_weight(self) -> float:
+        warmup = self.mix_warmup_steps
+        ramp = max(1, self.mix_ramp_steps)
+        if self.global_step < warmup:
+            return 0.0
+        progress = min(1.0, (self.global_step - warmup) / ramp)
+        return progress
 
 
 __all__ = ["Stage25Trainer", "Stage25Outputs"]
