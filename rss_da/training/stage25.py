@@ -1,9 +1,10 @@
 """Stage-2.5 학습 루프."""
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from itertools import chain
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -18,6 +19,7 @@ from rss_da.losses.vm_nll import von_mises_nll
 from rss_da.models.decoder import DecoderD
 from rss_da.models.encoders import Adapter, E4, E5, Fuse
 from rss_da.models.m2 import DoAPredictor
+from rss_da.models.m3 import ResidualCalibrator
 from rss_da.training.ema import build_ema, update_ema
 from rss_da.utils.metrics import circular_mean_error_deg
 
@@ -27,16 +29,29 @@ class Stage25Outputs:
     """Stage-2.5 스텝 결과."""
 
     loss_total: float
-    loss_sup: float
+    sup_nll: float
     loss_kd: float
-    loss_data: float
-    loss_mix: float
+    recon_data_raw: float
+    recon_mix_norm: float
+    recon_mix_raw: float
     loss_phys: float
     loss_align: float
     deg_rmse: float
     kappa_mean: float
     mix_weight: float
-    mix_weighted: float
+    mix_weighted_norm: float
+    mix_var: float
+    m3_enabled: Optional[float] = None
+    m3_gate_mean: Optional[float] = None
+    m3_gate_p10: Optional[float] = None
+    m3_gate_p90: Optional[float] = None
+    m3_keep_ratio: Optional[float] = None
+    m3_resid_abs_mean_deg: Optional[float] = None
+    m3_resid_abs_p90_deg: Optional[float] = None
+    m3_delta_clip_rate: Optional[float] = None
+    m3_kappa_corr_spearman: Optional[float] = None
+    m3_residual_penalty: Optional[float] = None
+    m3_gate_entropy: Optional[float] = None
 
 
 def _ensure_two_dim(tensor: torch.Tensor) -> torch.Tensor:
@@ -65,6 +80,21 @@ class Stage25Trainer:
         self.adapter = Adapter(latent_dim=latent_dim, phi_dim=phi_dim, dropout_p=dropout).to(self.device)
         self.decoder = DecoderD(latent_dim=latent_dim, dropout_p=dropout).to(self.device)
         self.m2 = DoAPredictor(phi_dim=phi_dim, latent_dim=latent_dim, dropout_p=dropout).to(self.device)
+        self.m3_enabled = cfg.train.use_m3
+        self.m3: Optional[ResidualCalibrator]
+        if self.m3_enabled:
+            delta_max = math.radians(cfg.train.m3_delta_max_deg)
+            feat_dim = self._m3_feature_dim(phi_dim)
+            self.m3 = ResidualCalibrator(
+                in_dim=feat_dim,
+                hidden=latent_dim,
+                dropout_p=dropout,
+                delta_max_rad=delta_max,
+                gate_mode=cfg.train.m3_gate_mode,
+                gate_tau=cfg.train.m3_gate_tau,
+            ).to(self.device)
+        else:
+            self.m3 = None
         base_params = list(
             chain(
                 self.e4.parameters(),
@@ -117,16 +147,22 @@ class Stage25Trainer:
                 nn.Linear(latent_dim, 2),
             ).to(self.device)
         self.teacher = self._build_teacher(teacher_modules)
-        self.shared_parameters = tuple(
-            chain(
-                self.e5.parameters(),
-                self.decoder.parameters(),
-                self.m2.parameters(),
-            )
-        )
+        shared_modules = [self.e5, self.decoder, self.m2]
+        if self.m3 is not None:
+            shared_modules.append(self.m3)
+        self.shared_parameters = tuple(chain(*(module.parameters() for module in shared_modules)))
         self.global_step = 0
         self.mix_warmup_steps = cfg.data.mix_warmup_steps
         self.mix_ramp_steps = cfg.data.mix_ramp_steps
+        self.mix_weight_cap = cfg.data.mix_weight_max
+        self.mix_variance_floor = cfg.data.mix_variance_floor
+        total_span = max(1, self.mix_warmup_steps + self.mix_ramp_steps)
+        warmup_steps = int(total_span * cfg.train.m3_warmup_frac)
+        self.m3_warmup_steps = max(1, warmup_steps)
+        self.m3_detach_m2 = cfg.train.m3_detach_m2
+        self.m3_lambda_resid = cfg.train.m3_lambda_resid
+        self.m3_lambda_gate = cfg.train.m3_lambda_gate_entropy
+        self.m3_gate_keep_threshold = cfg.train.m3_gate_keep_threshold
 
     def _build_teacher(self, teacher_modules: Optional[Dict[str, nn.Module]]) -> Dict[str, nn.Module]:
         teacher: Dict[str, nn.Module] = {}
@@ -149,6 +185,8 @@ class Stage25Trainer:
     def train(self, mode: bool = True) -> None:
         for module in (self.e4, self.e5, self.fuse, self.adapter, self.decoder, self.m2):
             module.train(mode)
+        if self.m3 is not None:
+            self.m3.train(mode)
         if self.domain_classifier is not None:
             self.domain_classifier.train(mode)
 
@@ -164,6 +202,62 @@ class Stage25Trainer:
             return obj
 
         return {key: _maybe_to_device(value) for key, value in batch.items()}
+
+    @staticmethod
+    def _m3_feature_dim(phi_dim: int) -> int:
+        base_z5d = 5
+        phi = phi_dim
+        c_meas = 2
+        four_rss = 4
+        mu = 2
+        cos_comp = 2
+        sin_comp = 2
+        kappa = 2
+        return base_z5d + phi + c_meas + four_rss + mu + cos_comp + sin_comp + kappa
+
+    @staticmethod
+    def _spearman_corr(x: torch.Tensor, y: torch.Tensor) -> float:
+        if x.numel() < 8:
+            return 0.0
+        x = x.flatten().double()
+        y = y.flatten().double()
+        if torch.isnan(x).any() or torch.isnan(y).any():
+            return 0.0
+        x_rank = torch.argsort(torch.argsort(x))
+        y_rank = torch.argsort(torch.argsort(y))
+        x_rank = x_rank.double() - x_rank.double().mean()
+        y_rank = y_rank.double() - y_rank.double().mean()
+        denom = torch.sqrt((x_rank.pow(2).sum()) * (y_rank.pow(2).sum()))
+        if denom <= 0:
+            return 0.0
+        return torch.clamp((x_rank * y_rank).sum() / denom, min=-1.0, max=1.0).item()
+
+    def _assemble_m3_features(
+        self,
+        z5d: torch.Tensor,
+        phi: torch.Tensor,
+        c_meas: torch.Tensor,
+        four_rss: torch.Tensor,
+        mu: torch.Tensor,
+        kappa: torch.Tensor,
+    ) -> torch.Tensor:
+        comps = [z5d, phi, c_meas]
+        if four_rss.numel() == z5d.size(0) * 4:
+            comps.append(four_rss)
+        else:
+            comps.append(torch.zeros(z5d.size(0), 4, device=z5d.device, dtype=z5d.dtype))
+        comps.extend([mu, torch.cos(mu), torch.sin(mu), kappa])
+        return torch.cat(comps, dim=-1)
+
+    def _m3_weight(self) -> float:
+        if not self.m3_enabled:
+            return 0.0
+        ramp = max(1, self.mix_ramp_steps)
+        start = self.m3_warmup_steps
+        if self.global_step < start:
+            return 0.0
+        progress = min(1.0, (self.global_step - start) / ramp)
+        return progress
 
     def _teacher_forward(self, z5d: torch.Tensor) -> Dict[str, torch.Tensor]:
         with torch.no_grad():
@@ -199,6 +293,7 @@ class Stage25Trainer:
         c_meas_rel = batch.get("c_meas_rel")
         if c_meas_rel is not None and c_meas_rel.numel() == 0:
             c_meas_rel = None
+        four_rss = batch.get("four_rss", torch.empty(0, device=self.device))
         self.optimizer.zero_grad()
         mu0_s, kappa0_s, _ = self.m2(z5d, None)
         mu0_s = _ensure_two_dim(mu0_s)
@@ -212,6 +307,52 @@ class Stage25Trainer:
         mu1_s, kappa1_s, logits_s = self.m2(z5d, phi_s)
         mu1_s = _ensure_two_dim(mu1_s)
         kappa1_s = _ensure_two_dim(kappa1_s)
+        m3_resid_penalty = torch.zeros(1, device=self.device, dtype=mu1_s.dtype)
+        m3_gate_penalty = torch.zeros(1, device=self.device, dtype=mu1_s.dtype)
+        m3_stats: Optional[Tuple[float, float, float, float, float, float, float, float, float, float, float]] = None
+        if self.m3_enabled and self.m3 is not None:
+            c_feat = c_meas_rel if c_meas_rel is not None else c_meas
+            features = self._assemble_m3_features(z5d, phi_s, c_feat, four_rss, mu1_s, kappa1_s)
+            ramp = self._m3_weight()
+            detach_inputs = self.m3_detach_m2 and ramp < 1.0
+            features_in = features.detach() if detach_inputs else features
+            mu_in = mu1_s.detach() if detach_inputs else mu1_s
+            kappa_in = kappa1_s.detach() if detach_inputs else kappa1_s
+            m3_out = self.m3(features_in, mu_in, kappa_in, ramp=ramp, extras={})
+            mu1_s = m3_out["mu_ref"]
+            gate = m3_out["gate"]
+            delta_effect = m3_out["delta_effect"]
+            clip_mask = m3_out["clip_mask"]
+            m3_resid_penalty = delta_effect.pow(2).mean() * self.m3_lambda_resid
+            gate_clamped = torch.clamp(gate, min=1e-6, max=1 - 1e-6)
+            gate_entropy = -(gate_clamped * torch.log(gate_clamped) + (1 - gate_clamped) * torch.log(1 - gate_clamped)).mean()
+            m3_gate_penalty = gate_entropy * self.m3_lambda_gate
+            with torch.no_grad():
+                gate_mean = gate.mean().item()
+                gate_p10 = torch.quantile(gate, 0.10).item()
+                gate_p90 = torch.quantile(gate, 0.90).item()
+                keep_ratio = (gate >= self.m3_gate_keep_threshold).float().mean().item()
+                resid_abs_deg = torch.rad2deg(delta_effect.abs())
+                resid_mean_deg = resid_abs_deg.mean().item()
+                resid_p90_deg = torch.quantile(resid_abs_deg, 0.90).item()
+                clip_rate = clip_mask.float().mean().item()
+                err = torch.atan2(torch.sin(mu1_s - theta_gt), torch.cos(mu1_s - theta_gt)).abs()
+                err_deg = torch.rad2deg(err).mean(dim=-1)
+                kappa_sample = kappa1_s.mean(dim=-1)
+                kappa_corr = self._spearman_corr(kappa_sample.detach(), err_deg.detach())
+                m3_stats = (
+                    1.0,
+                    gate_mean,
+                    gate_p10,
+                    gate_p90,
+                    keep_ratio,
+                    resid_mean_deg,
+                    resid_p90_deg,
+                    clip_rate,
+                    kappa_corr,
+                    m3_resid_penalty.detach().item(),
+                    m3_gate_penalty.detach().item(),
+                )
         loss_sup = von_mises_nll(mu1_s, kappa1_s, theta_gt)
         recon = recon_loss(
             r4_hat_s,
@@ -219,6 +360,7 @@ class Stage25Trainer:
             c_meas_dbm=c_meas,
             c_meas_rel_db=c_meas_rel,
             input_scale=self.cfg.data.input_scale,
+            mix_variance_floor=self.mix_variance_floor,
         )
         teacher_out = self._teacher_forward(z5d)
         gate = torch.sigmoid(teacher_out["kappa1"].mean(dim=-1, keepdim=True))
@@ -277,11 +419,11 @@ class Stage25Trainer:
             total_loss = (
                 w_sup * base_losses["sup"]
                 + w_kd * base_losses["kd"]
-                + w_mix * base_losses["mix"]
+                + base_losses["mix"]
                 + w_phys * base_losses["phys"]
             )
         w_align = self.cfg.train.loss_weights[3]
-        total_loss = total_loss + w_align * align_loss
+        total_loss = total_loss + w_align * align_loss + m3_resid_penalty + m3_gate_penalty
         total_loss.backward()
         if self.cfg.train.grad_clip:
             torch.nn.utils.clip_grad_norm_(
@@ -292,6 +434,7 @@ class Stage25Trainer:
                     self.adapter.parameters(),
                     self.decoder.parameters(),
                     self.m2.parameters(),
+                    self.m3.parameters() if self.m3 is not None else [],
                     self.domain_classifier.parameters() if self.domain_classifier is not None else [],
                 )),
                 self.cfg.train.grad_clip,
@@ -309,18 +452,45 @@ class Stage25Trainer:
             update_ema(module, self.teacher[name], decay)
         self.global_step += 1
         deg_rmse = circular_mean_error_deg(mu1_s.detach(), theta_gt.detach()).item()
+        if m3_stats is None and self.m3_enabled:
+            m3_stats = (
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                m3_resid_penalty.detach().item(),
+                m3_gate_penalty.detach().item(),
+            )
         outputs = Stage25Outputs(
             loss_total=total_loss.detach().item(),
-            loss_sup=loss_sup.detach().item(),
+            sup_nll=loss_sup.detach().item(),
             loss_kd=kd_losses["kd_total"].detach().item(),
-            loss_data=recon["data"].detach().item(),
-            loss_mix=recon["mix"].detach().item(),
+            recon_data_raw=recon["data"].detach().item(),
+            recon_mix_norm=recon["mix"].detach().item(),
+            recon_mix_raw=recon["mix_raw"].detach().item(),
             loss_phys=recon["phys"].detach().item(),
             loss_align=align_loss.detach().item(),
             deg_rmse=deg_rmse,
             kappa_mean=kappa1_s.detach().mean().item(),
             mix_weight=float(mix_weight),
-            mix_weighted=(mix_weight * recon["mix"]).detach().item(),
+            mix_weighted_norm=(mix_weight * recon["mix"]).detach().item(),
+            mix_var=recon["mix_var"].detach().item(),
+            m3_enabled=m3_stats[0] if m3_stats is not None else None,
+            m3_gate_mean=m3_stats[1] if m3_stats is not None else None,
+            m3_gate_p10=m3_stats[2] if m3_stats is not None else None,
+            m3_gate_p90=m3_stats[3] if m3_stats is not None else None,
+            m3_keep_ratio=m3_stats[4] if m3_stats is not None else None,
+            m3_resid_abs_mean_deg=m3_stats[5] if m3_stats is not None else None,
+            m3_resid_abs_p90_deg=m3_stats[6] if m3_stats is not None else None,
+            m3_delta_clip_rate=m3_stats[7] if m3_stats is not None else None,
+            m3_kappa_corr_spearman=m3_stats[8] if m3_stats is not None else None,
+            m3_residual_penalty=m3_stats[9] if m3_stats is not None else None,
+            m3_gate_entropy=m3_stats[10] if m3_stats is not None else None,
         )
         return outputs
 
@@ -330,7 +500,7 @@ class Stage25Trainer:
         if self.global_step < warmup:
             return 0.0
         progress = min(1.0, (self.global_step - warmup) / ramp)
-        return progress
+        return progress * self.mix_weight_cap
 
 
 __all__ = ["Stage25Trainer", "Stage25Outputs"]

@@ -31,5 +31,5 @@ def test_forward_mix_decreases():
             iterator = iter(loader)
             batch = next(iterator)
         outputs = trainer.train_step(batch)
-        mix_losses.append(outputs.loss_mix)
+        mix_losses.append(outputs.recon_mix_norm)
     assert min(mix_losses) <= mix_losses[0]

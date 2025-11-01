@@ -43,6 +43,14 @@ class TrainConfig:
     log_dir: str = "./logs"
     seed: int = 42
     m2_head_lr_scale: float = 2.0
+    m3_gate_mode: str = "kappa"  # {"none", "kappa", "mcdrop"}
+    m3_delta_max_deg: float = 10.0
+    m3_warmup_frac: float = 0.1
+    m3_detach_m2: bool = True
+    m3_lambda_resid: float = 1e-3
+    m3_lambda_gate_entropy: float = 1e-3
+    m3_gate_keep_threshold: float = 0.5
+    m3_gate_tau: float = 1.0
 
 
 @dataclass
@@ -59,6 +67,8 @@ class DataConfig:
     input_scale: str = "relative_db"  # {"relative_db", "absolute_dbm"}
     mix_warmup_steps: int = 500
     mix_ramp_steps: int = 1500
+    mix_weight_max: float = 0.25
+    mix_variance_floor: float = 1.0
     scaler_dir: str = "meta"
 
 
