@@ -54,6 +54,7 @@ class ResidualCalibrator(nn.Module):
         ramp: float = 1.0,
         delta_max: Optional[float] = None,
         gain: float = 1.0,
+        gate_threshold: float = 0.5,
         extras: Optional[Dict[str, torch.Tensor]] = None,
     ) -> Dict[str, torch.Tensor]:
         """Compute residual corrections."""
@@ -76,9 +77,10 @@ class ResidualCalibrator(nn.Module):
         if self.gate_mode == "none":
             gate_raw = torch.ones_like(gate_logits)
         elif self.gate_mode in {"kappa", "inv_kappa"}:
-            mean_kappa = kappa.mean()
-            std_kappa = kappa.std(unbiased=False).clamp(min=1e-6)
-            norm_kappa = (kappa.mean(dim=-1, keepdim=True) - mean_kappa) / std_kappa
+            sample_kappa = kappa.mean(dim=-1, keepdim=True)
+            mean_kappa = sample_kappa.mean(dim=0, keepdim=True)
+            std_kappa = sample_kappa.std(dim=0, keepdim=True, unbiased=False).clamp(min=1e-6)
+            norm_kappa = (sample_kappa - mean_kappa) / std_kappa
             if self.gate_mode == "inv_kappa":
                 norm_kappa = -norm_kappa
             aux["norm_kappa"] = norm_kappa.detach()
@@ -90,9 +92,10 @@ class ResidualCalibrator(nn.Module):
                 unc = extras.get("uncertainty")
             if unc is None:
                 aux["mcdrop_fallback"] = torch.ones(1, device=features.device)
-                mean_kappa = kappa.mean()
-                std_kappa = kappa.std(unbiased=False).clamp(min=1e-6)
-                norm_kappa = (kappa.mean(dim=-1, keepdim=True) - mean_kappa) / std_kappa
+                sample_kappa = kappa.mean(dim=-1, keepdim=True)
+                mean_kappa = sample_kappa.mean(dim=0, keepdim=True)
+                std_kappa = sample_kappa.std(dim=0, keepdim=True, unbiased=False).clamp(min=1e-6)
+                norm_kappa = (sample_kappa - mean_kappa) / std_kappa
                 scaled = (norm_kappa * self.kappa_scale + self.kappa_bias) / max(self.gate_tau, 1e-6)
                 gate_raw = torch.sigmoid(gate_logits + scaled)
             else:
@@ -100,18 +103,19 @@ class ResidualCalibrator(nn.Module):
                 gate_raw = torch.sigmoid(gate_logits + scaled_unc)
                 aux["uncertainty"] = unc.detach()
         gate = torch.clamp(gate_raw * ramp, min=0.0, max=1.0)
+        keep_mask = gate >= gate_threshold
         delta_effect = gate * delta * gain
         if effective_max <= 1e-6 or gain <= 1e-6:
             clip_mask = torch.zeros_like(delta, dtype=torch.bool)
         else:
-            active = gate > 1e-3
-            clip_mask = active & (delta.abs() >= (effective_max - 1e-6))
+            clip_mask = keep_mask & (delta.abs() >= (effective_max - 1e-6))
         mu_ref = _wrap_to_pi(mu + delta_effect)
         return {
             "delta_unit": delta_unit,
             "delta": delta,
             "gate": gate,
             "gate_raw": gate_raw,
+            "keep_mask": keep_mask,
             "mu_ref": mu_ref,
             "delta_effect": delta_effect,
             "clip_mask": clip_mask,

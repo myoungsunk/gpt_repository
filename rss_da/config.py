@@ -18,6 +18,7 @@ class TrainConfig:
     """학습 관련 하이퍼파라미터."""
 
     stage: str = "1"  # {"1", "2.5"}
+    phase: str = "pretrain_m2"  # {"pretrain_m2", "finetune_m3"}
     latent_dim: int = 128
     phi_dim: int = 16
     batch_size: int = 32
@@ -48,12 +49,19 @@ class TrainConfig:
     m3_delta_warmup_deg: float = 2.0
     m3_warmup_frac: float = 0.1
     m3_detach_m2: bool = True
+    m3_detach_warmup_epochs: int = 3
     m3_freeze_m2: bool = False
     m3_apply_eval_only: bool = False
-    m3_output_gain: float = 0.01
-    m3_lambda_resid: float = 1e-3
+    m3_output_gain: float = 1.0
+    m3_gain_start: float = 0.0
+    m3_gain_end: float = 1.0
+    m3_lambda_resid: float = 5e-2
     m3_lambda_gate_entropy: float = 1e-3
+    m3_lambda_keep_target: float = 0.0
     m3_gate_keep_threshold: float = 0.5
+    m3_target_keep_start: float = 0.2
+    m3_target_keep_end: float = 0.6
+    m3_keep_warmup_epochs: int = 5
     m3_gate_tau: float = 1.0
 
 

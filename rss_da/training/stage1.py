@@ -63,6 +63,7 @@ class Stage1Trainer:
 
     def __init__(self, cfg: Config, device: Optional[torch.device] = None) -> None:
         self.cfg = cfg
+        self.phase = cfg.train.phase
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         latent_dim = cfg.train.latent_dim
         phi_dim = cfg.train.phi_dim
@@ -73,7 +74,10 @@ class Stage1Trainer:
         self.adapter = Adapter(latent_dim=latent_dim, phi_dim=phi_dim, dropout_p=dropout).to(self.device)
         self.decoder = DecoderD(latent_dim=latent_dim, dropout_p=dropout).to(self.device)
         self.m2 = DoAPredictor(phi_dim=phi_dim, latent_dim=latent_dim, dropout_p=dropout).to(self.device)
-        self.m3_enabled = cfg.train.use_m3
+        phase_enables_m3 = self.phase == "finetune_m3"
+        self.m3_enabled = cfg.train.use_m3 or phase_enables_m3
+        if self.phase == "pretrain_m2":
+            self.m3_enabled = False
         self.m3: Optional[ResidualCalibrator]
         if self.m3_enabled:
             delta_max = math.radians(cfg.train.m3_delta_max_deg)
@@ -90,9 +94,10 @@ class Stage1Trainer:
             self.m3 = None
         self.m3_delta_max_rad = math.radians(cfg.train.m3_delta_max_deg)
         self.m3_delta_warmup_rad = min(self.m3_delta_max_rad, math.radians(cfg.train.m3_delta_warmup_deg))
-        self.m3_output_gain = cfg.train.m3_output_gain
+        self.m3_gain_start = cfg.train.m3_gain_start
+        self.m3_gain_end = cfg.train.m3_gain_end
         self.m3_apply_eval_only = cfg.train.m3_apply_eval_only
-        self.m3_freeze_m2 = cfg.train.m3_freeze_m2
+        self.m3_freeze_m2 = cfg.train.m3_freeze_m2 or (self.phase == "finetune_m3")
         base_params = list(
             chain(
                 self.e4.parameters(),
@@ -136,11 +141,17 @@ class Stage1Trainer:
         total_span = max(1, self.mix_warmup_steps + self.mix_ramp_steps)
         warmup_steps = int(total_span * cfg.train.m3_warmup_frac)
         self.m3_warmup_steps = max(1, warmup_steps)
-        self.m3_detach_steps = self.m3_warmup_steps
+        detach_steps = int(total_span * cfg.train.m3_detach_warmup_epochs / max(cfg.train.epochs, 1))
+        self.m3_detach_steps = max(1, detach_steps if detach_steps > 0 else self.m3_warmup_steps)
         self.m3_detach_m2 = cfg.train.m3_detach_m2
         self.m3_lambda_resid = cfg.train.m3_lambda_resid
         self.m3_lambda_gate = cfg.train.m3_lambda_gate_entropy
+        self.m3_lambda_keep = cfg.train.m3_lambda_keep_target
         self.m3_gate_keep_threshold = cfg.train.m3_gate_keep_threshold
+        keep_steps = int(total_span * cfg.train.m3_keep_warmup_epochs / max(cfg.train.epochs, 1))
+        self.m3_keep_schedule_steps = max(1, keep_steps if keep_steps > 0 else self.m3_warmup_steps)
+        self.m3_target_keep_start = cfg.train.m3_target_keep_start
+        self.m3_target_keep_end = cfg.train.m3_target_keep_end
 
     def train(self, mode: bool = True) -> None:
         self.e4.train(mode)
@@ -232,15 +243,15 @@ class Stage1Trainer:
         progress = min(1.0, (self.global_step - start) / ramp)
         return progress
 
-    def _m3_controls(self) -> Tuple[float, float, float]:
+    def _m3_controls(self) -> Tuple[float, float, float, float]:
         ramp = self._m3_weight()
-        warm_denom = max(1, self.m3_warmup_steps)
-        warm_progress = min(1.0, self.global_step / warm_denom)
         base_delta = self.m3_delta_max_rad
         warm_delta = self.m3_delta_warmup_rad
-        effective_delta = warm_delta * warm_progress + max(0.0, base_delta - warm_delta) * ramp
-        gain = self.m3_output_gain + (1.0 - self.m3_output_gain) * ramp
-        return ramp, effective_delta, gain
+        effective_delta = warm_delta + (base_delta - warm_delta) * ramp
+        keep_progress = min(1.0, self.global_step / max(1, self.m3_keep_schedule_steps))
+        gain = self.m3_gain_start + (self.m3_gain_end - self.m3_gain_start) * keep_progress
+        keep_target = self.m3_target_keep_start + (self.m3_target_keep_end - self.m3_target_keep_start) * keep_progress
+        return ramp, effective_delta, gain, keep_target
 
     def train_step(self, batch: Dict[str, torch.Tensor], enable_pass1: bool = True) -> Stage1Outputs:
         """단일 미니배치 학습."""
@@ -299,7 +310,7 @@ class Stage1Trainer:
             if self.m3_enabled and self.m3 is not None:
                 c_feat = c_meas_rel if c_meas_rel is not None else c_meas
                 features = self._assemble_m3_features(z5d, phi, c_feat, four_rss, mu1, kappa1)
-                ramp, delta_cap, gain = self._m3_controls()
+                ramp, delta_cap, gain, keep_target = self._m3_controls()
                 detached_for_warmup = False
                 if self.m3_detach_m2 and self.global_step < self.m3_detach_steps:
                     detached_for_warmup = True
@@ -314,20 +325,26 @@ class Stage1Trainer:
                     ramp=ramp,
                     delta_max=delta_cap,
                     gain=gain,
+                    gate_threshold=self.m3_gate_keep_threshold,
                     extras={},
                 )
                 mu_ref = m3_out["mu_ref"]
                 gate = m3_out["gate"]
                 gate_raw = m3_out["gate_raw"]
                 delta_effect = m3_out["delta_effect"]
+                keep_mask = m3_out["keep_mask"].float()
                 clip_mask = m3_out["clip_mask"]
-                m3_resid_penalty = delta_effect.pow(2).mean() * self.m3_lambda_resid
+                m3_resid_penalty = (delta_effect.pow(2).mean() * self.m3_lambda_resid)
                 gate_clamped = torch.clamp(gate, min=1e-6, max=1 - 1e-6)
                 gate_entropy = -(
                     gate_clamped * torch.log(gate_clamped)
                     + (1 - gate_clamped) * torch.log(1 - gate_clamped)
                 ).mean()
                 m3_gate_penalty = gate_entropy * self.m3_lambda_gate
+                if self.m3_lambda_keep > 0.0:
+                    keep_mean = keep_mask.mean()
+                    keep_penalty = (keep_mean - keep_target) ** 2 * self.m3_lambda_keep
+                    m3_gate_penalty = m3_gate_penalty + keep_penalty
                 use_ref_for_loss = not (
                     detached_for_warmup or (self.m3_apply_eval_only and self.m3.training)
                 )
@@ -338,12 +355,11 @@ class Stage1Trainer:
                     gate_mean = gate.mean().item()
                     gate_p10 = torch.quantile(gate, 0.10).item()
                     gate_p90 = torch.quantile(gate, 0.90).item()
-                    keep_ratio = (gate >= self.m3_gate_keep_threshold).float().mean().item()
+                    keep_ratio = keep_mask.mean().item()
                     resid_abs_deg = torch.rad2deg(delta_effect.abs())
                     resid_mean_deg = resid_abs_deg.mean().item()
                     resid_p90_deg = torch.quantile(resid_abs_deg, 0.90).item()
-                    active_mask = gate >= self.m3_gate_keep_threshold
-                    clip_rate = (clip_mask & active_mask).float().mean().item()
+                    clip_rate = (clip_mask & (keep_mask.bool())).float().mean().item()
                     err = torch.atan2(torch.sin(mu_eval - theta_gt), torch.cos(mu_eval - theta_gt)).abs()
                     err_deg = torch.rad2deg(err).mean(dim=-1)
                     kappa_sample = kappa1.mean(dim=-1)

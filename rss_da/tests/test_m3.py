@@ -42,12 +42,14 @@ def test_gate_monotonic_with_kappa() -> None:
         calibrator.residual_head.bias.zero_()
         calibrator.gate_head.weight.zero_()
         calibrator.gate_head.bias.zero_()
-    features = torch.zeros(16, 6)
-    mu = torch.zeros(16, 2)
-    low_kappa = torch.ones(16, 2)
-    high_kappa = torch.ones(16, 2) * 5.0
-    low_gate = calibrator(features, mu, low_kappa)["gate"].mean().item()
-    high_gate = calibrator(features, mu, high_kappa)["gate"].mean().item()
+    features = torch.zeros(32, 6)
+    mu = torch.zeros(32, 2)
+    kappa = torch.ones(32, 2)
+    kappa[16:] = 5.0
+    out = calibrator(features, mu, kappa)
+    gate = out["gate"].view(32)
+    low_gate = gate[:16].mean().item()
+    high_gate = gate[16:].mean().item()
     assert high_gate >= low_gate - 1e-5
 
 

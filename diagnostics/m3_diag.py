@@ -48,24 +48,23 @@ def _reliability_bins(kappa: torch.Tensor, err_deg: torch.Tensor, bins: int = 5)
 
 def _summarize_m3(
     gate: torch.Tensor,
+    keep_mask: torch.Tensor,
     delta_effect: torch.Tensor,
     clip_mask: torch.Tensor,
     theta: torch.Tensor,
     mu: torch.Tensor,
     kappa: torch.Tensor,
     corr_fn,
-    gate_threshold: float,
-    gate_raw: torch.Tensor | None = None,
 ) -> Dict[str, float]:
     err_rad, err_deg = _error_stats(mu, theta)
     stats = {
         "gate_mean": gate.mean().item(),
         "gate_p10": torch.quantile(gate, 0.10).item(),
         "gate_p90": torch.quantile(gate, 0.90).item(),
-        "keep_ratio": (gate >= gate_threshold).float().mean().item(),
+        "keep_ratio": keep_mask.float().mean().item(),
         "resid_abs_mean_deg": torch.rad2deg(delta_effect.abs()).mean().item(),
         "resid_abs_p90_deg": torch.quantile(torch.rad2deg(delta_effect.abs()), 0.90).item(),
-        "delta_clip_rate": (clip_mask & (gate >= gate_threshold)).float().mean().item(),
+        "delta_clip_rate": (clip_mask & keep_mask.bool()).float().mean().item(),
     }
     kappa_sample = kappa.mean(dim=-1)
     kappa_corr = corr_fn(kappa_sample, err_deg)
@@ -75,7 +74,11 @@ def _summarize_m3(
     return stats
 
 
-def analyze_stage1(trainer: Stage1Trainer, batch: Dict[str, torch.Tensor]) -> None:
+def analyze_stage1(
+    trainer: Stage1Trainer,
+    batch: Dict[str, torch.Tensor],
+    gate_threshold: float,
+) -> None:
     trainer.global_step = trainer.m3_warmup_steps + trainer.mix_ramp_steps + 1
     prepared = _prepare_batch(trainer, batch)
     z5d = prepared["z5d"]
@@ -108,19 +111,19 @@ def analyze_stage1(trainer: Stage1Trainer, batch: Dict[str, torch.Tensor]) -> No
                 ramp=1.0,
                 delta_max=trainer.m3_delta_max_rad,
                 gain=1.0,
+                gate_threshold=gate_threshold,
                 extras={},
             )
             mu_ref = m3_out["mu_ref"]
             stats = _summarize_m3(
                 m3_out["gate"],
+                m3_out["keep_mask"],
                 m3_out["delta_effect"],
                 m3_out["clip_mask"],
                 theta_gt,
                 mu_ref,
                 kappa1,
                 Stage1Trainer._spearman_corr,
-                trainer.m3_gate_keep_threshold,
-                m3_out.get("gate_raw"),
             )
             print("[Stage-1] M3 metrics:")
             print(
@@ -142,7 +145,11 @@ def analyze_stage1(trainer: Stage1Trainer, batch: Dict[str, torch.Tensor]) -> No
             print("[Stage-1] M3 disabled; no diagnostics available.")
 
 
-def analyze_stage25(trainer: Stage25Trainer, batch: Dict[str, torch.Tensor]) -> None:
+def analyze_stage25(
+    trainer: Stage25Trainer,
+    batch: Dict[str, torch.Tensor],
+    gate_threshold: float,
+) -> None:
     trainer.global_step = trainer.m3_warmup_steps + trainer.mix_ramp_steps + 1
     prepared = trainer._prepare_batch(batch)  # type: ignore[attr-defined]
     z5d = prepared["z5d"]
@@ -175,19 +182,19 @@ def analyze_stage25(trainer: Stage25Trainer, batch: Dict[str, torch.Tensor]) -> 
                 ramp=1.0,
                 delta_max=trainer.m3_delta_max_rad,
                 gain=1.0,
+                gate_threshold=gate_threshold,
                 extras={},
             )
             mu_ref = m3_out["mu_ref"]
             stats = _summarize_m3(
                 m3_out["gate"],
+                m3_out["keep_mask"],
                 m3_out["delta_effect"],
                 m3_out["clip_mask"],
                 theta_gt,
                 mu_ref,
                 kappa1,
                 trainer._spearman_corr,
-                trainer.m3_gate_keep_threshold,
-                m3_out.get("gate_raw"),
             )
             print("[Stage-2.5] M3 metrics:")
             print(
@@ -218,6 +225,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--logdir", type=str, default="./runs/demo")
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--enable_m3", action="store_true")
+    parser.add_argument("--m3_gate_threshold", type=float, default=0.5)
     return parser.parse_args()
 
 
@@ -244,7 +252,7 @@ def main() -> None:
         trainer = Stage1Trainer(cfg)
         trainer.train(False)
         batch = next(iter(loader))
-        analyze_stage1(trainer, batch)
+        analyze_stage1(trainer, batch, args.m3_gate_threshold)
     else:
         scaler_path = scaler_root if scaler_root.exists() else None
         loader = _build_dataloader(
@@ -260,7 +268,7 @@ def main() -> None:
         trainer = Stage25Trainer(cfg, teacher_modules=None)
         trainer.train(False)
         batch = next(iter(loader))
-        analyze_stage25(trainer, batch)
+        analyze_stage25(trainer, batch, args.m3_gate_threshold)
 
 
 if __name__ == "__main__":
