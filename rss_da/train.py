@@ -163,10 +163,12 @@ def _stage1_loop(
     logger = Logger(log_dir)
     global_step = 0
     try:
+        force_pass1 = trainer.m3_enabled and getattr(trainer, "m3_freeze_m2", False)
         for epoch in range(epochs):
             logging.info("[Stage-1] Starting epoch %d/%d", epoch + 1, epochs)
             for batch in loader:
-                outputs = trainer.train_step(batch, enable_pass1=epoch > 0)
+                enable_pass1 = epoch > 0 or force_pass1
+                outputs = trainer.train_step(batch, enable_pass1=enable_pass1)
                 metrics = {
                     "loss_total": outputs.loss_total,
                     "sup0_nll": outputs.sup0_nll,
