@@ -76,10 +76,12 @@ class ResidualCalibrator(nn.Module):
         if self.gate_mode == "none":
             gate_raw = torch.ones_like(gate_logits)
         elif self.gate_mode in {"kappa", "inv_kappa"}:
-            norm_kappa = kappa.mean(dim=-1, keepdim=True)
-            aux["norm_kappa"] = norm_kappa.detach()
+            mean_kappa = kappa.mean()
+            std_kappa = kappa.std(unbiased=False).clamp(min=1e-6)
+            norm_kappa = (kappa.mean(dim=-1, keepdim=True) - mean_kappa) / std_kappa
             if self.gate_mode == "inv_kappa":
-                norm_kappa = 1.0 / torch.clamp(norm_kappa, min=1e-6)
+                norm_kappa = -norm_kappa
+            aux["norm_kappa"] = norm_kappa.detach()
             scaled = (norm_kappa * self.kappa_scale + self.kappa_bias) / max(self.gate_tau, 1e-6)
             gate_raw = torch.sigmoid(gate_logits + scaled)
         else:  # mcdrop
@@ -88,7 +90,9 @@ class ResidualCalibrator(nn.Module):
                 unc = extras.get("uncertainty")
             if unc is None:
                 aux["mcdrop_fallback"] = torch.ones(1, device=features.device)
-                norm_kappa = kappa.mean(dim=-1, keepdim=True)
+                mean_kappa = kappa.mean()
+                std_kappa = kappa.std(unbiased=False).clamp(min=1e-6)
+                norm_kappa = (kappa.mean(dim=-1, keepdim=True) - mean_kappa) / std_kappa
                 scaled = (norm_kappa * self.kappa_scale + self.kappa_bias) / max(self.gate_tau, 1e-6)
                 gate_raw = torch.sigmoid(gate_logits + scaled)
             else:

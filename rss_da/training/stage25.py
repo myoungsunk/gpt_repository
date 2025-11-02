@@ -173,6 +173,7 @@ class Stage25Trainer:
         total_span = max(1, self.mix_warmup_steps + self.mix_ramp_steps)
         warmup_steps = int(total_span * cfg.train.m3_warmup_frac)
         self.m3_warmup_steps = max(1, warmup_steps)
+        self.m3_detach_steps = self.m3_warmup_steps
         self.m3_detach_m2 = cfg.train.m3_detach_m2
         self.m3_lambda_resid = cfg.train.m3_lambda_resid
         self.m3_lambda_gate = cfg.train.m3_lambda_gate_entropy
@@ -339,11 +340,10 @@ class Stage25Trainer:
             c_feat = c_meas_rel if c_meas_rel is not None else c_meas
             features = self._assemble_m3_features(z5d, phi_s, c_feat, four_rss, mu1_s, kappa1_s)
             ramp, delta_cap, gain = self._m3_controls()
-            detach_inputs = False
-            if self.m3_freeze_m2:
-                detach_inputs = True
-            elif self.m3_detach_m2 and ramp < 1.0:
-                detach_inputs = True
+            detached_for_warmup = False
+            if self.m3_detach_m2 and self.global_step < self.m3_detach_steps:
+                detached_for_warmup = True
+            detach_inputs = self.m3_freeze_m2 or detached_for_warmup
             features_in = features.detach() if detach_inputs else features
             mu_in = mu1_s.detach() if detach_inputs else mu1_s
             kappa_in = kappa1_s.detach() if detach_inputs else kappa1_s
@@ -368,7 +368,9 @@ class Stage25Trainer:
                 + (1 - gate_clamped) * torch.log(1 - gate_clamped)
             ).mean()
             m3_gate_penalty = gate_entropy * self.m3_lambda_gate
-            use_ref_for_loss = not (self.m3_apply_eval_only and self.m3.training)
+            use_ref_for_loss = not (
+                detached_for_warmup or (self.m3_apply_eval_only and self.m3.training)
+            )
             if use_ref_for_loss:
                 mu1_s = mu_ref
             mu_eval = mu_ref
@@ -376,11 +378,12 @@ class Stage25Trainer:
                 gate_mean = gate.mean().item()
                 gate_p10 = torch.quantile(gate, 0.10).item()
                 gate_p90 = torch.quantile(gate, 0.90).item()
-                keep_ratio = (gate_raw >= self.m3_gate_keep_threshold).float().mean().item()
+                keep_ratio = (gate >= self.m3_gate_keep_threshold).float().mean().item()
                 resid_abs_deg = torch.rad2deg(delta_effect.abs())
                 resid_mean_deg = resid_abs_deg.mean().item()
                 resid_p90_deg = torch.quantile(resid_abs_deg, 0.90).item()
-                clip_rate = clip_mask.float().mean().item()
+                active_mask = gate >= self.m3_gate_keep_threshold
+                clip_rate = (clip_mask & active_mask).float().mean().item()
                 err = torch.atan2(torch.sin(mu_eval - theta_gt), torch.cos(mu_eval - theta_gt)).abs()
                 err_deg = torch.rad2deg(err).mean(dim=-1)
                 kappa_sample = kappa1_s.mean(dim=-1)
