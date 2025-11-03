@@ -1,4 +1,3 @@
-# rss_da/physics/combine.py
 """4RSS를 안테나별 합성 전력으로 결합하는 함수."""
 from __future__ import annotations
 

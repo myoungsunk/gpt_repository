@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from itertools import chain
 from typing import Dict, Optional
@@ -25,17 +26,15 @@ class Stage1Outputs:
 
     """단일 스텝 결과."""
     loss_total: float
-    loss_sup0: float
-    loss_sup1: float
-    loss_data: float
-    loss_mix: float
-    loss_phys: float
+    sup0_nll: float
+    sup1_nll: float
+    recon_data_raw: float
+    recon_mix_norm: float
+    recon_mix_raw: float
+    recon_phys: float
     deg_rmse: float
     kappa_mean: float
     mix_weight: float
-<<<<<<< Updated upstream
-    mix_weighted: float
-=======
     mix_weighted_norm: float
     mix_var: float
     m3_enabled: Optional[float] = None
@@ -62,7 +61,6 @@ class Stage1Outputs:
     grad_norm_m3: Optional[float] = None
 <<<<<<< Updated upstream
 =======
->>>>>>> Stashed changes
 
 >>>>>>> Stashed changes
 
@@ -76,6 +74,7 @@ class Stage1Trainer:
     """Stage-1 학습기."""
     def __init__(self, cfg: Config, device: Optional[torch.device] = None) -> None:
         self.cfg = cfg
+        self.phase = cfg.train.phase
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         latent_dim = cfg.train.latent_dim
         phi_dim = cfg.train.phi_dim
@@ -86,14 +85,24 @@ class Stage1Trainer:
         self.adapter = Adapter(latent_dim=latent_dim, phi_dim=phi_dim, dropout_p=dropout).to(self.device)
         self.decoder = DecoderD(latent_dim=latent_dim, dropout_p=dropout).to(self.device)
         self.m2 = DoAPredictor(phi_dim=phi_dim, latent_dim=latent_dim, dropout_p=dropout).to(self.device)
+        phase_enables_m3 = self.phase == "finetune_m3"
+        self.m3_enabled = cfg.train.use_m3 or phase_enables_m3
+        if self.phase == "pretrain_m2":
+            self.m3_enabled = False
         self.m3: Optional[ResidualCalibrator]
-        if cfg.train.use_m3:
-            feat_dim = 5 + phi_dim
-            self.m3 = ResidualCalibrator(feature_dim=feat_dim, hidden_dim=latent_dim, dropout_p=dropout).to(self.device)
+        if self.m3_enabled:
+            delta_max = math.radians(cfg.train.m3_delta_max_deg)
+            feat_dim = self._m3_feature_dim(phi_dim)
+            self.m3 = ResidualCalibrator(
+                in_dim=feat_dim,
+                hidden=latent_dim,
+                dropout_p=dropout,
+                delta_max_rad=delta_max,
+                gate_mode=cfg.train.m3_gate_mode,
+                gate_tau=cfg.train.m3_gate_tau,
+            ).to(self.device)
         else:
             self.m3 = None
-<<<<<<< Updated upstream
-=======
         self.total_epochs = max(1, int(cfg.train.epochs))
         self.m3_delta_max_rad = math.radians(cfg.train.m3_delta_max_deg)
         self.m3_delta_warmup_rad = min(self.m3_delta_max_rad, math.radians(cfg.train.m3_delta_warmup_deg))
@@ -103,7 +112,6 @@ class Stage1Trainer:
         self.m3_apply_eval_only = cfg.train.m3_apply_eval_only
         self.m3_freeze_m2 = cfg.train.m3_freeze_m2 or (self.phase == "finetune_m3")
         self.m3_gate_tau = cfg.train.m3_gate_tau
->>>>>>> Stashed changes
         base_params = list(
             chain(
                 self.e4.parameters(),
@@ -111,22 +119,30 @@ class Stage1Trainer:
                 self.fuse.parameters(),
                 self.adapter.parameters(),
                 self.decoder.parameters(),
-                self.m2.backbone.parameters(),
                 self.m3.parameters() if self.m3 is not None else [],
             )
         )
-        head_params = list(chain(self.m2.mu_head.parameters(), self.m2.kappa_head.parameters()))
-        if self.m2.logits_head is not None:
-            head_params.extend(self.m2.logits_head.parameters())
+        if not self.m3_freeze_m2:
+            base_params.extend(self.m2.backbone.parameters())
+        head_params = []
+        if not self.m3_freeze_m2:
+            head_params = list(chain(self.m2.mu_head.parameters(), self.m2.kappa_head.parameters()))
+            if self.m2.logits_head is not None:
+                head_params.extend(self.m2.logits_head.parameters())
+        else:
+            for param in self.m2.parameters():
+                param.requires_grad = False
         nn.init.constant_(self.m2.kappa_head.bias, 0.5)
-        self.optimizer = optim.Adam(
-            [
-                {"params": base_params},
+        param_groups = [{"params": base_params}]
+        if head_params:
+            param_groups.append(
                 {
                     "params": head_params,
                     "lr": cfg.train.learning_rate * cfg.train.m2_head_lr_scale,
-                },
-            ],
+                }
+            )
+        self.optimizer = optim.Adam(
+            param_groups,
             lr=cfg.train.learning_rate,
             weight_decay=cfg.train.weight_decay,
         )
@@ -134,8 +150,6 @@ class Stage1Trainer:
         self._debug_stats_printed = False
         self.mix_warmup_steps = cfg.data.mix_warmup_steps
         self.mix_ramp_steps = cfg.data.mix_ramp_steps
-<<<<<<< Updated upstream
-=======
         self.mix_weight_cap = cfg.data.mix_weight_max
         self.mix_variance_floor = cfg.data.mix_variance_floor
         total_span = max(1, self.mix_warmup_steps + self.mix_ramp_steps)
@@ -175,7 +189,6 @@ class Stage1Trainer:
                 self.m3_gain_end,
                 cfg.train.m3_delta_max_deg,
             )
->>>>>>> Stashed changes
 
     def train(self, mode: bool = True) -> None:
         self.e4.train(mode)
@@ -203,6 +216,83 @@ class Stage1Trainer:
             return obj
 
         return {key: _to_device(value) for key, value in batch.items()}
+
+    @staticmethod
+    def _m3_feature_dim(phi_dim: int) -> int:
+        base_z5d = 5
+        phi = phi_dim
+        c_meas = 2
+        four_rss = 4
+        mu = 2
+        cos_comp = 2
+        sin_comp = 2
+        kappa = 2
+        return base_z5d + phi + c_meas + four_rss + mu + cos_comp + sin_comp + kappa
+
+    @staticmethod
+    def _spearman_corr(x: torch.Tensor, y: torch.Tensor) -> float:
+        if x.numel() < 8:
+            return 0.0
+        x = x.flatten().double()
+        y = y.flatten().double()
+        if torch.isnan(x).any() or torch.isnan(y).any():
+            return 0.0
+        x_rank = torch.argsort(torch.argsort(x))
+        y_rank = torch.argsort(torch.argsort(y))
+        x_rank = x_rank.double()
+        y_rank = y_rank.double()
+        x_rank = x_rank - x_rank.mean()
+        y_rank = y_rank - y_rank.mean()
+        denom = torch.sqrt((x_rank.pow(2).sum()) * (y_rank.pow(2).sum()))
+        if denom <= 0:
+            return 0.0
+        return torch.clamp((x_rank * y_rank).sum() / denom, min=-1.0, max=1.0).item()
+
+    def _assemble_m3_features(
+        self,
+        z5d: torch.Tensor,
+        phi: torch.Tensor,
+        c_meas: torch.Tensor,
+        four_rss: torch.Tensor,
+        mu: torch.Tensor,
+        kappa: torch.Tensor,
+    ) -> torch.Tensor:
+        comps = [z5d]
+        comps.append(phi)
+        comps.append(c_meas)
+        if four_rss.numel() == z5d.size(0) * 4:
+            comps.append(four_rss)
+        else:
+            comps.append(torch.zeros(z5d.size(0), 4, device=z5d.device, dtype=z5d.dtype))
+        comps.append(mu)
+        comps.append(torch.cos(mu))
+        comps.append(torch.sin(mu))
+        comps.append(kappa)
+        return torch.cat(comps, dim=-1)
+
+    def _m3_weight(self) -> float:
+        if not self.m3_enabled:
+            return 0.0
+        ramp = max(1, self.mix_ramp_steps)
+        start = self.m3_warmup_steps
+        if self.global_step < start:
+            return 0.0
+        progress = min(1.0, (self.global_step - start) / ramp)
+        return progress
+
+    def _m3_controls(self) -> Tuple[float, float, float, float]:
+        ramp = self._m3_weight()
+        base_delta = self.m3_delta_max_rad
+        warm_delta = self.m3_delta_warmup_rad
+        effective_delta = warm_delta + (base_delta - warm_delta) * ramp
+        keep_progress = min(1.0, self.global_step / max(1, self.m3_keep_schedule_steps))
+        if self.m3_gain_ramp_steps > 0:
+            gain_progress = min(1.0, self.global_step / self.m3_gain_ramp_steps)
+        else:
+            gain_progress = keep_progress
+        gain = self.m3_gain_start + (self.m3_gain_end - self.m3_gain_start) * gain_progress
+        keep_target = self.m3_target_keep_start + (self.m3_target_keep_end - self.m3_target_keep_start) * keep_progress
+        return ramp, effective_delta, gain, keep_target
 
     def train_step(self, batch: Dict[str, torch.Tensor], enable_pass1: bool = True) -> Stage1Outputs:
         """단일 미니배치 학습."""
@@ -234,6 +324,8 @@ class Stage1Trainer:
         loss_sup0 = von_mises_nll(mu0, kappa0, theta_gt)
         recon = {
             "mix": torch.zeros_like(loss_sup0),
+            "mix_raw": torch.zeros_like(loss_sup0),
+            "mix_var": torch.ones_like(loss_sup0),
             "data": torch.zeros_like(loss_sup0),
             "phys": torch.zeros_like(loss_sup0),
             "total": torch.zeros_like(loss_sup0),
@@ -241,15 +333,12 @@ class Stage1Trainer:
         mu1 = mu0
         kappa1 = kappa0
         loss_sup1 = torch.zeros_like(loss_sup0)
-<<<<<<< Updated upstream
-=======
         m3_resid_penalty = torch.zeros_like(loss_sup0)
         m3_gate_penalty = torch.zeros_like(loss_sup0)
         m3_stats: Optional[Dict[str, Optional[float]]] = None
         mu_eval = mu0
         decoder_recon_mae_4rss: Optional[float] = None
         decoder_mae_samples: Optional[torch.Tensor] = None
->>>>>>> Stashed changes
         if enable_pass1:
             h5 = self.e5(z5d)  # torch.FloatTensor[B,H]
             r4_hat = self.decoder(h5.detach(), mu0)  # torch.FloatTensor[B,4]
@@ -260,12 +349,6 @@ class Stage1Trainer:
             mu1, kappa1, _ = self.m2(z5d, phi)
             mu1 = _ensure_two_dim(mu1)
             kappa1 = _ensure_two_dim(kappa1)
-<<<<<<< Updated upstream
-            if self.m3 is not None:
-                features = torch.cat([z5d, phi], dim=-1)
-                residual = self.m3(mu1, kappa1, features)
-                mu1 = torch.atan2(torch.sin(mu1 + residual), torch.cos(mu1 + residual))
-=======
             mu_eval = mu1
             r4_gt = four_rss if four_rss.numel() == z5d.size(0) * 4 else None
             if r4_gt is not None:
@@ -384,7 +467,6 @@ class Stage1Trainer:
             mix_variance_floor=self.mix_variance_floor,
         )
 =======
->>>>>>> Stashed changes
             loss_sup1 = von_mises_nll(mu1, kappa1, theta_gt)
             r4_gt = four_rss if four_rss.numel() == z5d.size(0) * 4 else None
             recon = recon_loss(
@@ -393,13 +475,20 @@ class Stage1Trainer:
                 c_meas_dbm=c_meas,
                 c_meas_rel_db=c_meas_rel,
                 input_scale=self.cfg.data.input_scale,
+                mix_variance_floor=self.mix_variance_floor,
             )
 >>>>>>> Stashed changes
         w_sup, _, w_mix, _, w_phys = self.cfg.train.loss_weights
         mix_scale = self._mix_weight()
-        mix_weight = w_mix * mix_scale
+        mix_weight = min(w_mix * mix_scale, self.mix_weight_cap)
         loss_total = w_sup * (loss_sup0 + loss_sup1)
-        loss_total = loss_total + mix_weight * (recon["mix"] + recon["data"]) + w_phys * recon["phys"]
+        loss_total = (
+            loss_total
+            + mix_weight * (recon["mix"] + recon["data"])
+            + w_phys * recon["phys"]
+            + m3_resid_penalty
+            + m3_gate_penalty
+        )
         loss_total.backward()
         grad_norm_m3: Optional[float] = None
         if self.m3 is not None:
@@ -426,9 +515,6 @@ class Stage1Trainer:
             )
         self.optimizer.step()
         self.global_step += 1
-<<<<<<< Updated upstream
-        deg_rmse = circular_mean_error_deg(mu1.detach(), theta_gt.detach()).item()
-=======
         deg_rmse = circular_mean_error_deg(mu_eval.detach(), theta_gt.detach()).item()
         if m3_stats is None and self.m3_enabled:
             m3_stats = {
@@ -454,20 +540,17 @@ class Stage1Trainer:
                 "err_delta_mean_deg": 0.0,
                 "phi_quality_corr": None,
             }
->>>>>>> Stashed changes
         result = Stage1Outputs(
             loss_total=loss_total.detach().item(),
-            loss_sup0=loss_sup0.detach().item(),
-            loss_sup1=loss_sup1.detach().item(),
-            loss_data=recon["data"].detach().item(),
-            loss_mix=recon["mix"].detach().item(),
-            loss_phys=recon["phys"].detach().item(),
+            sup0_nll=loss_sup0.detach().item(),
+            sup1_nll=loss_sup1.detach().item(),
+            recon_data_raw=recon["data"].detach().item(),
+            recon_mix_norm=recon["mix"].detach().item(),
+            recon_mix_raw=recon["mix_raw"].detach().item(),
+            recon_phys=recon["phys"].detach().item(),
             deg_rmse=deg_rmse,
             kappa_mean=kappa1.detach().mean().item(),
             mix_weight=float(mix_weight),
-<<<<<<< Updated upstream
-            mix_weighted=(mix_weight * recon["mix"]).detach().item(),
-=======
             mix_weighted_norm=(mix_weight * recon["mix"]).detach().item(),
             mix_var=recon["mix_var"].detach().item(),
             m3_enabled=m3_stats["enabled"] if m3_stats is not None else None,
@@ -492,7 +575,6 @@ class Stage1Trainer:
             phi_quality_improve_corr=m3_stats["phi_quality_corr"] if m3_stats is not None else None,
             decoder_recon_mae_4rss=decoder_recon_mae_4rss,
             grad_norm_m3=grad_norm_m3,
->>>>>>> Stashed changes
         )
         return result
 
@@ -517,7 +599,7 @@ class Stage1Trainer:
         if self.global_step < warmup:
             return 0.0
         progress = min(1.0, (self.global_step - warmup) / ramp)
-        return progress
+        return progress * self.mix_weight_cap
 
 
 __all__ = ["Stage1Trainer", "Stage1Outputs"]

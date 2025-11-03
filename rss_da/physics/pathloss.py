@@ -1,5 +1,3 @@
-
-
 """경로손실 기반 물리 제약."""
 from __future__ import annotations
 

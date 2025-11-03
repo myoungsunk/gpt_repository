@@ -18,6 +18,7 @@ class TrainConfig:
     """학습 관련 하이퍼파라미터."""
 
     stage: str = "1"  # {"1", "2.5"}
+    phase: str = "pretrain_m2"  # {"pretrain_m2", "finetune_m3"}
     latent_dim: int = 128
     phi_dim: int = 16
     batch_size: int = 32
@@ -43,8 +44,6 @@ class TrainConfig:
     log_dir: str = "./logs"
     seed: int = 42
     m2_head_lr_scale: float = 2.0
-<<<<<<< Updated upstream
-=======
     m3_gate_mode: str = "kappa"  # {"none", "kappa", "inv_kappa", "mcdrop"}
     m3_delta_max_deg: float = 10.0
     m3_delta_warmup_deg: float = 2.0
@@ -70,7 +69,6 @@ class TrainConfig:
     phi_gate_threshold: Optional[float] = None
     phi_gate_quantile: Optional[float] = 0.6
     phi_gate_min_keep: float = 0.0
->>>>>>> Stashed changes
 
 
 @dataclass
@@ -87,6 +85,8 @@ class DataConfig:
     input_scale: str = "relative_db"  # {"relative_db", "absolute_dbm"}
     mix_warmup_steps: int = 500
     mix_ramp_steps: int = 1500
+    mix_weight_max: float = 0.25
+    mix_variance_floor: float = 1.0
     scaler_dir: str = "meta"
 
 

@@ -1,0 +1,17 @@
+[2025-11-03 16:20:38,426][INFO] Console log level set to INFO
+[2025-11-03 16:20:38,426][INFO] File logging enabled at runs/stage25_test/train.log
+[2025-11-03 16:20:38,426][INFO] Preparing Stage-1 teacher for Stage-2.5 training
+[2025-11-03 16:20:39,194][INFO] Stage-1 trainer initialized on device: cpu
+[2025-11-03 16:20:39,194][WARNING] data\stage1_rel.csv not found. Falling back to synthetic samples.
+[2025-11-03 16:20:39,194][INFO] Generated synthetic 1 dataset with 128 samples for batch size 32
+[2025-11-03 16:20:39,194][INFO] Saved z5d scaler to runs/stage25_test/stage1_teacher/phaseA/meta/stage1/z5d_scaler.pkl
+[2025-11-03 16:20:39,194][INFO] [Stage-1] Starting epoch 1/1
+[2025-11-03 16:20:39,209][INFO] [Stage-1][debug] z5d stats mean=0.010 std=1.037 min=-2.718 max=2.880
+[2025-11-03 16:20:39,218][INFO] [Stage-1][step=0] loss=4.1755 sup0_nll=4.1755 sup1_nll=0.0000 data_raw=0.0000 mix_norm=0.0000 mix_raw=0.0000 mix_w=0.000000 mix_w_norm=0.0000 mix_var=1.0000 phys=0.0000 degRMSE=93.544
+[2025-11-03 16:20:39,236][INFO] Saved best Stage-1 checkpoint to runs/stage25_test/stage1_teacher/phaseA/best_m2.pth (degRMSE=82.4330)
+[2025-11-03 16:20:39,237][INFO] Starting Stage-2.5 training for 3 epochs
+[2025-11-03 16:20:39,246][INFO] Stage-2.5 trainer initialized on device: cpu
+[2025-11-03 16:20:39,247][WARNING] data\stage25_rel.csv not found. Falling back to synthetic samples.
+[2025-11-03 16:20:39,248][INFO] Generated synthetic 2.5 dataset with 128 samples for batch size 32
+[2025-11-03 16:20:39,249][INFO] Loaded z5d scaler from runs/stage25_test/stage1_teacher/phaseA/meta/stage1/z5d_scaler.pkl
+[2025-11-03 16:20:39,251][INFO] [Stage-2.5] Starting epoch 1/3

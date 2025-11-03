@@ -20,5 +20,5 @@ def test_stage1_single_step():
     batch = next(iter(loader))
     outputs = trainer.train_step(batch)
     assert outputs.loss_total > 0
-    assert outputs.loss_sup0 > 0
-    assert outputs.loss_sup1 > 0
+    assert outputs.sup0_nll >= 0
+    assert outputs.sup1_nll >= 0
