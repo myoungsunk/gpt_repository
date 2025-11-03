@@ -1,6 +1,10 @@
+<<<<<<< Updated upstream
 """Stage-2.5 학습 루프."""
 from __future__ import annotations
 
+=======
+import math
+>>>>>>> Stashed changes
 from dataclasses import dataclass
 from itertools import chain
 from typing import Dict, Optional
@@ -21,11 +25,9 @@ from rss_da.models.m2 import DoAPredictor
 from rss_da.training.ema import build_ema, update_ema
 from rss_da.utils.metrics import circular_mean_error_deg
 
-
 @dataclass
 class Stage25Outputs:
     """Stage-2.5 스텝 결과."""
-
     loss_total: float
     loss_sup: float
     loss_kd: float
@@ -38,16 +40,13 @@ class Stage25Outputs:
     mix_weight: float
     mix_weighted: float
 
-
 def _ensure_two_dim(tensor: torch.Tensor) -> torch.Tensor:
     if tensor.ndim == 3:
         return tensor[:, 0, :]
     return tensor
 
-
 class Stage25Trainer:
     """Stage-2.5 도메인 적응 학습기."""
-
     def __init__(
         self,
         cfg: Config,
@@ -65,6 +64,33 @@ class Stage25Trainer:
         self.adapter = Adapter(latent_dim=latent_dim, phi_dim=phi_dim, dropout_p=dropout).to(self.device)
         self.decoder = DecoderD(latent_dim=latent_dim, dropout_p=dropout).to(self.device)
         self.m2 = DoAPredictor(phi_dim=phi_dim, latent_dim=latent_dim, dropout_p=dropout).to(self.device)
+<<<<<<< Updated upstream
+=======
+        phase_enables_m3 = self.phase == "finetune_m3"
+        self.m3_enabled = cfg.train.use_m3 or phase_enables_m3
+        self.m3: Optional[ResidualCalibrator]
+        if self.m3_enabled:
+            delta_max = math.radians(cfg.train.m3_delta_max_deg)
+            feat_dim = self._m3_feature_dim(phi_dim)
+            self.m3 = ResidualCalibrator(
+                in_dim=feat_dim,
+                hidden=latent_dim,
+                dropout_p=dropout,
+                delta_max_rad=delta_max,
+                gate_mode=cfg.train.m3_gate_mode,
+                gate_tau=cfg.train.m3_gate_tau,
+            ).to(self.device)
+        else:
+            self.m3 = None
+        self.total_epochs = max(1, int(cfg.train.epochs))
+        self.m3_delta_max_rad = math.radians(cfg.train.m3_delta_max_deg)
+        self.m3_delta_warmup_rad = min(self.m3_delta_max_rad, math.radians(cfg.train.m3_delta_warmup_deg))
+        self.m3_gain_start = cfg.train.m3_gain_start
+        self.m3_gain_end = cfg.train.m3_gain_end
+        self.m3_gain_ramp_steps = max(0, cfg.train.m3_gain_ramp_steps)
+        self.m3_apply_eval_only = cfg.train.m3_apply_eval_only
+        self.m3_freeze_m2 = cfg.train.m3_freeze_m2 or (self.phase == "finetune_m3")
+>>>>>>> Stashed changes
         base_params = list(
             chain(
                 self.e4.parameters(),
@@ -127,6 +153,26 @@ class Stage25Trainer:
         self.global_step = 0
         self.mix_warmup_steps = cfg.data.mix_warmup_steps
         self.mix_ramp_steps = cfg.data.mix_ramp_steps
+<<<<<<< Updated upstream
+=======
+        self.mix_weight_cap = cfg.data.mix_weight_max
+        self.mix_variance_floor = cfg.data.mix_variance_floor
+        total_span = max(1, self.mix_warmup_steps + self.mix_ramp_steps)
+        warmup_steps = int(total_span * cfg.train.m3_warmup_frac)
+        self.m3_warmup_steps = max(1, warmup_steps)
+        detach_steps = int(total_span * cfg.train.m3_detach_warmup_epochs / self.total_epochs)
+        self.m3_detach_steps = max(1, detach_steps if detach_steps > 0 else self.m3_warmup_steps)
+        self.m3_detach_m2 = cfg.train.m3_detach_m2
+        self.m3_lambda_resid = cfg.train.m3_lambda_resid
+        self.m3_lambda_gate = cfg.train.m3_lambda_gate_entropy
+        self.m3_lambda_keep = cfg.train.m3_lambda_keep_target
+        self.m3_gate_keep_threshold = cfg.train.m3_gate_keep_threshold
+        self.m3_quantile_keep = cfg.train.m3_quantile_keep
+        keep_steps = int(total_span * cfg.train.m3_keep_warmup_epochs / self.total_epochs)
+        self.m3_keep_schedule_steps = max(1, keep_steps if keep_steps > 0 else self.m3_warmup_steps)
+        self.m3_target_keep_start = cfg.train.m3_target_keep_start
+        self.m3_target_keep_end = cfg.train.m3_target_keep_end
+>>>>>>> Stashed changes
 
     def _build_teacher(self, teacher_modules: Optional[Dict[str, nn.Module]]) -> Dict[str, nn.Module]:
         teacher: Dict[str, nn.Module] = {}
