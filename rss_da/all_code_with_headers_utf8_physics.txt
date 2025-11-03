@@ -1,0 +1,203 @@
+﻿"""?덊뀒???대뱷 紐⑤뜽."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Optional
+
+import torch
+import torch.nn.functional as F
+
+
+def cos_power_gain(theta_rad: torch.Tensor, m: float) -> torch.Tensor:
+    """cos^m ?뺥깭???뚮씪硫뷀듃由??대뱷."""
+
+    return (torch.cos(theta_rad).clamp(min=0.0)) ** m
+
+
+@dataclass
+class AntennaGain:
+    lut_theta_rad: Optional[torch.Tensor] = None  # torch.FloatTensor[N]
+    lut_gain_db: Optional[torch.Tensor] = None  # torch.FloatTensor[N]
+    fallback_m: float = 2.0
+    fallback_gain_db: float = 0.0
+
+    def lookup(self, theta_rad: torch.Tensor) -> torch.Tensor:
+        """LUT 湲곕컲 ?대뱷 ?먮뒗 ?뚮씪硫뷀듃由??대갚."""
+
+        if self.lut_theta_rad is not None and self.lut_gain_db is not None:
+            theta_lut = self.lut_theta_rad.to(theta_rad.device)
+            gain_lut = self.lut_gain_db.to(theta_rad.device)
+            idx = torch.bucketize(theta_rad, theta_lut.clamp(min=theta_lut[0], max=theta_lut[-1]))
+            idx0 = torch.clamp(idx - 1, min=0, max=theta_lut.numel() - 1)
+            idx1 = torch.clamp(idx, min=0, max=theta_lut.numel() - 1)
+            theta0 = theta_lut[idx0]
+            theta1 = theta_lut[idx1]
+            gain0 = gain_lut[idx0]
+            gain1 = gain_lut[idx1]
+            denom = torch.clamp(theta1 - theta0, min=1e-6)
+            t = (theta_rad - theta0) / denom
+            return gain0 + t * (gain1 - gain0)
+        gain = cos_power_gain(theta_rad, self.fallback_m)
+        gain_db = 10 * torch.log10(torch.clamp(gain, min=1e-6))
+        return gain_db + self.fallback_gain_db
+
+    def consistency_penalty(self, gain_a_db: torch.Tensor, gain_b_db: torch.Tensor) -> torch.Tensor:
+        """???덊뀒??媛??곷? ?대뱷 ?쇨????섎꼸??"""
+
+        diff = gain_a_db - gain_b_db
+        return F.mse_loss(diff, torch.zeros_like(diff))
+
+
+__all__ = ["AntennaGain", "cos_power_gain"]
+"""4RSS瑜??덊뀒?섎퀎 ?⑹꽦 ?꾨젰?쇰줈 寃고빀?섎뒗 ?⑥닔."""
+from __future__ import annotations
+
+import torch
+
+from .units import dbm_to_mw, mw_to_dbm
+
+
+def _rel_db_to_linear(x_db: torch.Tensor) -> torch.Tensor:
+    return 10 ** (x_db / 10)
+
+
+def _linear_to_rel_db(x_lin: torch.Tensor, eps: float = 1e-9) -> torch.Tensor:
+    return 10 * torch.log10(torch.clamp(x_lin, min=eps))
+
+
+def combine_r4_to_c(r4_dbm: torch.Tensor) -> torch.Tensor:
+    """寃쎈줈蹂?RSS(dBm)瑜??덊뀒?섎퀎 ?⑹꽦 ?꾨젰?쇰줈 蹂?섑븳??"""
+
+    if r4_dbm.ndim != 2 or r4_dbm.size(-1) != 4:
+        raise ValueError("Expected input shape [B,4]")
+    power_mw = dbm_to_mw(r4_dbm)  # torch.FloatTensor[B,4]
+    sum_a = power_mw[:, :2].sum(dim=-1, keepdim=True)  # torch.FloatTensor[B,1]
+    sum_b = power_mw[:, 2:].sum(dim=-1, keepdim=True)  # torch.FloatTensor[B,1]
+    combined = torch.cat([sum_a, sum_b], dim=-1)  # torch.FloatTensor[B,2]
+    return mw_to_dbm(combined)  # torch.FloatTensor[B,2]
+
+
+def combine_r4_rel_to_c_rel(r4_rel_db: torch.Tensor) -> torch.Tensor:
+    """?곷? dB ?ㅼ???4RSS瑜??곷? dB ?⑹꽦 ?꾨젰?쇰줈 蹂??"""
+
+    if r4_rel_db.ndim != 2 or r4_rel_db.size(-1) != 4:
+        raise ValueError("Expected input shape [B,4]")
+    power_lin = _rel_db_to_linear(r4_rel_db)  # torch.FloatTensor[B,4]
+    sum_a = power_lin[:, :2].sum(dim=-1, keepdim=True)
+    sum_b = power_lin[:, 2:].sum(dim=-1, keepdim=True)
+    combined = torch.cat([sum_a, sum_b], dim=-1)
+    return _linear_to_rel_db(combined)
+
+
+__all__ = ["combine_r4_to_c", "combine_r4_rel_to_c_rel"]
+"""寃쎈줈?먯떎 湲곕컲 臾쇰━ ?쒖빟."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+import torch
+import torch.nn.functional as F
+
+
+def ldpl_expected_rss(
+    distance_m: torch.Tensor,  # torch.FloatTensor[B]
+    tx_power_dbm: float,
+    pathloss_exponent: float,
+    reference_distance_m: float = 1.0,
+    reference_loss_db: float = 40.0,
+) -> torch.Tensor:
+    """濡쒓렇 嫄곕━ 寃쎈줈?먯떎 紐⑤뜽 湲곕? RSS."""
+
+    distance_safe = torch.clamp(distance_m, min=1e-3)
+    return tx_power_dbm - (
+        reference_loss_db + 10 * pathloss_exponent * torch.log10(distance_safe / reference_distance_m)
+    )
+
+
+@dataclass
+class PathlossConstraint:
+    tx_power_dbm: float = 0.0
+    pathloss_exponent: float = 2.0
+    reference_distance_m: float = 1.0
+    reference_loss_db: float = 40.0
+    slack_db: float = 6.0
+
+    def penalty(self, predicted_dbm: torch.Tensor, distance_m: torch.Tensor) -> torch.Tensor:
+        """?덉륫 ?꾨젰??臾쇰━??踰붿쐞瑜?踰쀬뼱?щ뒗吏 ?섎꼸??"""
+
+        target = ldpl_expected_rss(
+            distance_m,
+            tx_power_dbm=self.tx_power_dbm,
+            pathloss_exponent=self.pathloss_exponent,
+            reference_distance_m=self.reference_distance_m,
+            reference_loss_db=self.reference_loss_db,
+        )
+        diff = predicted_dbm - target
+        margin = torch.clamp(diff.abs() - self.slack_db, min=0.0)
+        return F.smooth_l1_loss(margin, torch.zeros_like(margin))
+
+
+def friis_gain(
+    distance_m: torch.Tensor,  # torch.FloatTensor[B]
+    wavelength_m: float,
+    tx_gain_db: float,
+    rx_gain_db: float,
+) -> torch.Tensor:
+    """Friis 諛⑹젙??湲곕컲 ?섏떊 ?꾨젰 dB."""
+
+    distance_safe = torch.clamp(distance_m, min=1e-3)
+    fspl = 20 * torch.log10(4 * torch.pi * distance_safe / wavelength_m)
+    return tx_gain_db + rx_gain_db - fspl
+
+
+def range_penalty(
+    distance_m: torch.Tensor,  # torch.FloatTensor[B]
+    min_distance_m: float,
+    max_distance_m: float,
+) -> torch.Tensor:
+    """?덉슜 嫄곕━ 踰붿쐞瑜?踰쀬뼱?섎㈃ ?섎꼸??"""
+
+    low = F.relu(min_distance_m - distance_m)
+    high = F.relu(distance_m - max_distance_m)
+    return (low + high).mean()
+
+
+__all__ = ["ldpl_expected_rss", "PathlossConstraint", "friis_gain", "range_penalty"]
+"""?⑥쐞 蹂???좏떥."""
+from __future__ import annotations
+
+import torch
+
+
+def dbm_to_mw(x_dbm: torch.Tensor) -> torch.Tensor:
+    """dBm 媛믪쓣 mW濡?蹂?섑븳??"""
+
+    return 10 ** (x_dbm / 10)
+
+
+def mw_to_dbm(x_mw: torch.Tensor, eps: float = 1e-9) -> torch.Tensor:
+    """mW 媛믪쓣 dBm?쇰줈 蹂?섑븳??"""
+
+    x_safe = torch.clamp(x_mw, min=eps)
+    return 10 * torch.log10(x_safe)
+
+
+__all__ = ["dbm_to_mw", "mw_to_dbm"]
+"""臾쇰━ ?좏떥 ?쒕툕?⑦궎吏."""
+
+from .antenna import AntennaGain, cos_power_gain
+from .combine import combine_r4_rel_to_c_rel, combine_r4_to_c
+from .pathloss import PathlossConstraint, friis_gain, ldpl_expected_rss, range_penalty
+from .units import dbm_to_mw, mw_to_dbm
+
+__all__ = [
+    "dbm_to_mw",
+    "mw_to_dbm",
+    "combine_r4_to_c",
+    "combine_r4_rel_to_c_rel",
+    "ldpl_expected_rss",
+    "PathlossConstraint",
+    "friis_gain",
+    "range_penalty",
+    "AntennaGain",
+    "cos_power_gain",
+]

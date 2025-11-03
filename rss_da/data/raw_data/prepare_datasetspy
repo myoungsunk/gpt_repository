@@ -1,0 +1,334 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Utility to convert Stage-1/Stage-2 RSS datasets and a LoS physics CSV
+into the standardized schema used by the rss_da project.
+
+Assumptions:
+- Stage-1 CSV (module_input_sim_m15.csv) columns (linear power, likely Watts):
+    RSS1_LoS1,RSS2_LoS1,RSS1_LoS2,RSS2_LoS2,RSS1_combined,RSS2_combined,
+    d1,d2,room_dim_meter,theta1_true,theta2_true
+- Stage-2 CSV (module_input_sim_nlos.csv) columns (linear power):
+    room_dim_meter,theta1_true,theta2_true,RSS1_combined,RSS2_combined,d1,d2
+- Physics CSV (single_los_rss_data.csv) columns:
+    room_dim_meter,theta_true,RSS1_dB,RSS2_dB
+  - theta_true is in degrees (per user), RSS in dB already.
+
+Outputs:
+- stage1_standardized.csv: standardized schema for Stage-1
+- stage25_standardized.csv: standardized schema for Stage-2.5 (aka Stage-2.5 target domain)
+- single_los_lut.parquet: physics LUT for antenna/pathloss reference
+- schema_readme.md: human-readable schema documentation
+
+Notes:
+- Linear power input is assumed to be in Watts. If in mW, set --linear_unit mw.
+- All dBm conversions take numerical stability into account.
+"""
+import argparse
+import math
+from typing import Optional, Tuple
+import numpy as np
+import pandas as pd
+from pathlib import Path
+
+EPS = 1e-20
+
+def linear_to_dbm(p_lin: np.ndarray, linear_unit: str = "w") -> np.ndarray:
+    """
+    Convert linear power to dBm.
+    Parameters
+    ----------
+    p_lin : array-like
+        Linear power values. If `linear_unit == "w"`, values are in Watts.
+        If `linear_unit == "mw"`, values are in mW.
+    linear_unit : str
+        "w" (Watts) or "mw" (milliwatts)
+    Returns
+    -------
+    np.ndarray
+        dBm values.
+    """
+    p_lin = np.asarray(p_lin, dtype=np.float64)
+    p_safe = np.clip(p_lin, EPS, None)
+    if linear_unit.lower() == "w":
+        # convert W -> mW by *1000, then 10*log10(mW)
+        return 10.0 * np.log10(p_safe * 1e3)
+    elif linear_unit.lower() == "mw":
+        return 10.0 * np.log10(p_safe)
+    else:
+        raise ValueError(f"Unknown linear_unit: {linear_unit} (use 'w' or 'mw')")
+
+def dbm_to_mw(dbm: np.ndarray) -> np.ndarray:
+    """Convert dBm to mW."""
+    dbm = np.asarray(dbm, dtype=np.float64)
+    return np.power(10.0, dbm / 10.0)
+
+def build_z5d(rss1_combined_dbm: np.ndarray,
+              rss2_combined_dbm: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Build z5d features from combined dBm values.
+    Returns (delta_db, sum_db, log_ratio).
+    """
+    a = np.asarray(rss1_combined_dbm, dtype=np.float64)  # RSS1_combined_dBm
+    b = np.asarray(rss2_combined_dbm, dtype=np.float64)  # RSS2_combined_DBm
+    delta_db = b - a
+    sum_db = a + b
+    # log_ratio uses linear ratio to avoid dB nonlinearity issues
+    Pa_mw = dbm_to_mw(a)
+    Pb_mw = dbm_to_mw(b)
+    log_ratio = np.log(np.clip(Pb_mw / np.clip(Pa_mw, EPS, None), EPS, None))
+    return delta_db, sum_db, log_ratio
+
+def convert_stage1_csv(path_in: str, path_out: str,
+                       default_split: str = "train",
+                       domain_id: int = 0,
+                       linear_unit: str = "w") -> pd.DataFrame:
+    """
+    Convert Stage-1 CSV (with 4RSS GT and combined linear powers) into standardized schema.
+    """
+    df = pd.read_csv(path_in)
+    required_cols = [
+        "RSS1_LoS1","RSS2_LoS1","RSS1_LoS2","RSS2_LoS2",
+        "RSS1_combined","RSS2_combined","d1","d2","room_dim_meter",
+        "theta1_true","theta2_true"
+    ]
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"Stage-1 CSV missing columns: {missing}")
+
+    # Convert linear to dBm
+    c1_dbm = linear_to_dbm(df["RSS1_combined"].values, linear_unit)
+    c2_dbm = linear_to_dbm(df["RSS2_combined"].values, linear_unit)
+
+    # Four-RSS (two antennas x two paths)
+    r1_p1_dbm = linear_to_dbm(df["RSS1_LoS1"].values, linear_unit)
+    r2_p1_dbm = linear_to_dbm(df["RSS2_LoS1"].values, linear_unit)
+    r1_p2_dbm = linear_to_dbm(df["RSS1_LoS2"].values, linear_unit)
+    r2_p2_dbm = linear_to_dbm(df["RSS2_LoS2"].values, linear_unit)
+
+    delta_db, sum_db, log_ratio = build_z5d(c1_dbm, c2_dbm)
+
+    out = pd.DataFrame({
+        "sample_id": np.arange(len(df)),
+        "split": default_split,
+        "domain_id": domain_id,
+        "is_labeled": 1,
+        # z5d (5)
+        "rss1_combined_dbm": c1_dbm,
+        "rss2_combined_dbm": c2_dbm,
+        "delta_db": delta_db,
+        "sum_db": sum_db,
+        "log_ratio": log_ratio,
+        # c_meas_dbm (2)
+        "c1_dbm": c1_dbm,
+        "c2_dbm": c2_dbm,
+        # four_rss_dbm (4) - GT present in Stage-1
+        "rss_a_p1_dbm": r1_p1_dbm,
+        "rss_b_p1_dbm": r2_p1_dbm,
+        "rss_a_p2_dbm": r1_p2_dbm,
+        "rss_b_p2_dbm": r2_p2_dbm,
+        # angles
+        "theta1_rad": df["theta1_true"].values.astype(np.float64),
+        "theta2_rad": df["theta2_true"].values.astype(np.float64),
+        # optional geometry
+        "d1_m": df["d1"].values.astype(np.float64),
+        "d2_m": df["d2"].values.astype(np.float64),
+        "room_dim_m": df["room_dim_meter"].values.astype(np.float64),
+        # flags
+        "mask_4rss_is_gt": 1,
+    })
+
+    # re-order columns for readability
+    cols_order = [
+        "sample_id","split","domain_id","is_labeled",
+        "rss1_combined_dbm","rss2_combined_dbm","delta_db","sum_db","log_ratio",
+        "c1_dbm","c2_dbm",
+        "rss_a_p1_dbm","rss_b_p1_dbm","rss_a_p2_dbm","rss_b_p2_dbm",
+        "theta1_rad","theta2_rad","d1_m","d2_m","room_dim_m","mask_4rss_is_gt"
+    ]
+    out = out[cols_order]
+    out.to_csv(path_out, index=False)
+    return out
+
+def convert_stage2_csv(path_in: str, path_out: str,
+                       default_split: str = "train",
+                       domain_id: int = 1,
+                       linear_unit: str = "w") -> pd.DataFrame:
+    """
+    Convert Stage-2 (target, no 4RSS GT) CSV into standardized schema.
+    """
+    df = pd.read_csv(path_in)
+    required_cols = [
+        "room_dim_meter","theta1_true","theta2_true",
+        "RSS1_combined","RSS2_combined","d1","d2"
+    ]
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"Stage-2 CSV missing columns: {missing}")
+
+    c1_dbm = linear_to_dbm(df["RSS1_combined"].values, linear_unit)
+    c2_dbm = linear_to_dbm(df["RSS2_combined"].values, linear_unit)
+    delta_db, sum_db, log_ratio = build_z5d(c1_dbm, c2_dbm)
+
+    out = pd.DataFrame({
+        "sample_id": np.arange(len(df)),
+        "split": default_split,
+        "domain_id": domain_id,
+        "is_labeled": 1,  # per user's assumption (label-rich)
+        # z5d
+        "rss1_combined_dbm": c1_dbm,
+        "rss2_combined_dbm": c2_dbm,
+        "delta_db": delta_db,
+        "sum_db": sum_db,
+        "log_ratio": log_ratio,
+        # c_meas_dbm
+        "c1_dbm": c1_dbm,
+        "c2_dbm": c2_dbm,
+        # no four_rss_dbm in Stage-2.5
+        "rss_a_p1_dbm": np.nan,
+        "rss_b_p1_dbm": np.nan,
+        "rss_a_p2_dbm": np.nan,
+        "rss_b_p2_dbm": np.nan,
+        # angles
+        "theta1_rad": df["theta1_true"].values.astype(np.float64),
+        "theta2_rad": df["theta2_true"].values.astype(np.float64),
+        # geometry
+        "d1_m": df["d1"].values.astype(np.float64),
+        "d2_m": df["d2"].values.astype(np.float64),
+        "room_dim_m": df["room_dim_meter"].values.astype(np.float64),
+        # flags
+        "mask_4rss_is_gt": 0,
+    })
+
+    cols_order = [
+        "sample_id","split","domain_id","is_labeled",
+        "rss1_combined_dbm","rss2_combined_dbm","delta_db","sum_db","log_ratio",
+        "c1_dbm","c2_dbm",
+        "rss_a_p1_dbm","rss_b_p1_dbm","rss_a_p2_dbm","rss_b_p2_dbm",
+        "theta1_rad","theta2_rad","d1_m","d2_m","room_dim_m","mask_4rss_is_gt"
+    ]
+    out = out[cols_order]
+    out.to_csv(path_out, index=False)
+    return out
+
+def convert_physics_csv(path_in: str, path_out_parquet: str) -> pd.DataFrame:
+    """
+    Convert single_los_rss_data.csv into a compact LUT parquet.
+    - theta_true is in degrees (per user note).
+    - RSS1_dB, RSS2_dB already in dB scale.
+    """
+    df = pd.read_csv(path_in)
+    required_cols = ["room_dim_meter","theta_true","RSS1_dB","RSS2_dB"]
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"Physics CSV missing columns: {missing}")
+    df = df.copy()
+    df["theta_deg"] = df["theta_true"].astype(float)
+    df["theta_rad"] = np.deg2rad(df["theta_deg"].values)
+    # keep canonical column names
+    df = df.rename(columns={
+        "room_dim_meter": "distance_m",
+        "RSS1_dB": "rss1_db",
+        "RSS2_dB": "rss2_db",
+    })
+    df[["distance_m","theta_deg","theta_rad","rss1_db","rss2_db"]].to_parquet(path_out_parquet, index=False)
+    return df
+
+def write_schema_readme(path_out: str):
+    schema = f"""
+# rss_da Standardized Dataset Schema
+
+## Common fields per sample
+- sample_id: int
+- split: str ("train"/"val"/"calib"/"test")  [default via CLI]
+- domain_id: int  (0=Stage-1, 1=Stage-2.5)
+- is_labeled: int (1/0)
+
+### z5d (5 features, dBm-based)
+- rss1_combined_dbm: float
+- rss2_combined_dbm: float
+- delta_db: float  (rss2 - rss1 in dB)
+- sum_db: float    (rss1 + rss2 in dB)
+- log_ratio: float (log(P2_lin/P1_lin), P in mW)
+
+### c_meas_dbm (duplicated from z5d[0:2])
+- c1_dbm, c2_dbm
+
+### four_rss_dbm (Stage-1 only; NaN in Stage-2.5)
+- rss_a_p1_dbm, rss_b_p1_dbm, rss_a_p2_dbm, rss_b_p2_dbm
+
+### angles
+- theta1_rad, theta2_rad
+
+### geometry
+- d1_m, d2_m, room_dim_m
+
+### flags
+- mask_4rss_is_gt: 1 if GT(only Stage-1), else 0
+
+## Physics LUT parquet (single_los_lut.parquet)
+- distance_m: float
+- theta_deg: float
+- theta_rad: float
+- rss1_db: float
+- rss2_db: float
+"""
+    Path(path_out).write_text(schema, encoding="utf-8")
+
+def main():
+    ap = argparse.ArgumentParser(description="Convert Stage-1/Stage-2/Physics CSVs into standardized rss_da schema.")
+    ap.add_argument("--stage1_csv", type=str, default="module_input_sim_m15.csv",
+                    help="Path to Stage-1 CSV (with 4RSS GT)")
+    ap.add_argument("--stage2_csv", type=str, default="module_input_sim_nlos.csv",
+                    help="Path to Stage-2 CSV (no 4RSS GT)")
+    ap.add_argument("--physics_csv", type=str, default="single_los_rss_data.csv",
+                    help="Path to physics CSV (LoS antenna/pathloss reference)")
+    ap.add_argument("--linear_unit", type=str, default="w", choices=["w","mw"],
+                    help="Unit of linear power in inputs (W or mW)")
+    ap.add_argument("--out_dir", type=str, default="standardized",
+                    help="Output directory")
+    ap.add_argument("--s1_split", type=str, default="train")
+    ap.add_argument("--s2_split", type=str, default="train")
+    ap.add_argument("--s1_domain_id", type=int, default=0)
+    ap.add_argument("--s2_domain_id", type=int, default=1)
+    args = ap.parse_args()
+
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    s1_out = out_dir / "stage1_standardized.csv"
+    s2_out = out_dir / "stage25_standardized.csv"
+    phys_out = out_dir / "single_los_lut.parquet"
+    schema_md = out_dir / "schema_readme.md"
+
+    # Convert
+    try:
+        df1 = convert_stage1_csv(args.stage1_csv, str(s1_out),
+                                 default_split=args.s1_split,
+                                 domain_id=args.s1_domain_id,
+                                 linear_unit=args.linear_unit)
+        print(f"[OK] Stage-1 → {s1_out} (N={len(df1)})")
+    except Exception as e:
+        print(f"[WARN] Stage-1 not converted: {e}")
+
+    try:
+        df2 = convert_stage2_csv(args.stage2_csv, str(s2_out),
+                                 default_split=args.s2_split,
+                                 domain_id=args.s2_domain_id,
+                                 linear_unit=args.linear_unit)
+        print(f"[OK] Stage-2.5 → {s2_out} (N={len(df2)})")
+    except Exception as e:
+        print(f"[WARN] Stage-2.5 not converted: {e}")
+
+    try:
+        dfp = convert_physics_csv(args.physics_csv, str(phys_out))
+        print(f"[OK] Physics LUT → {phys_out} (N={len(dfp)})")
+    except Exception as e:
+        print(f"[WARN] Physics LUT not converted: {e}")
+
+    # Schema README
+    write_schema_readme(str(schema_md))
+    print(f"[OK] Wrote schema README → {schema_md}")
+
+if __name__ == "__main__":
+    main()

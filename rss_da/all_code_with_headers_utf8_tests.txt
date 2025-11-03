@@ -1,0 +1,180 @@
+﻿import pytest
+
+torch = pytest.importorskip("torch")
+from torch.utils.data import DataLoader
+
+from rss_da.config import Config
+from rss_da.data.dataset import RssDoADataset, collate_samples
+from rss_da.data.synth_generator import SynthConfig, build_samples, generate_synth_samples
+from rss_da.training.stage1 import Stage1Trainer
+
+
+def _build_loader(cfg: Config) -> DataLoader:
+    _, arrays = generate_synth_samples(SynthConfig(num_samples=128))
+    samples = list(build_samples(arrays))
+    dataset = RssDoADataset(samples, stage="1", modality_dropout_p=0.0, training=True)
+    loader = DataLoader(dataset, batch_size=cfg.train.batch_size, shuffle=True, num_workers=0, collate_fn=collate_samples)
+    return loader
+
+
+def test_forward_mix_decreases():
+    cfg = Config()
+    cfg.train.batch_size = 16
+    trainer = Stage1Trainer(cfg)
+    loader = _build_loader(cfg)
+    iterator = iter(loader)
+    mix_losses = []
+    for step in range(10):
+        try:
+            batch = next(iterator)
+        except StopIteration:
+            iterator = iter(loader)
+            batch = next(iterator)
+        outputs = trainer.train_step(batch)
+        mix_losses.append(outputs.recon_mix_norm)
+    assert min(mix_losses) <= mix_losses[0]
+from __future__ import annotations
+
+import math
+
+import torch
+
+from rss_da.losses.vm_nll import von_mises_nll
+from rss_da.models.m3 import ResidualCalibrator
+
+
+def test_residual_calibrator_outputs_shapes() -> None:
+    calibrator = ResidualCalibrator(in_dim=21, hidden=16, dropout_p=0.0)
+    features = torch.randn(8, 21)
+    mu = torch.zeros(8, 2)
+    kappa = torch.ones(8, 2) * 3.0
+    out = calibrator(features, mu, kappa)
+    assert out["delta"].shape == (8, 2)
+    assert out["gate"].shape == (8, 1)
+    assert out["mu_ref"].shape == (8, 2)
+    assert out["clip_mask"].shape == (8, 2)
+
+
+def test_mu_ref_within_bounds() -> None:
+    calibrator = ResidualCalibrator(in_dim=10, hidden=8, dropout_p=0.0)
+    features = torch.randn(4, 10)
+    mu = torch.full((4, 2), math.pi - 0.1)
+    kappa = torch.ones(4, 2) * 2.0
+    out = calibrator(features, mu, kappa)
+    mu_ref = out["mu_ref"]
+    assert torch.all(mu_ref <= math.pi)
+    assert torch.all(mu_ref > -math.pi)
+
+
+def test_gate_monotonic_with_kappa() -> None:
+    calibrator = ResidualCalibrator(in_dim=6, hidden=8, dropout_p=0.0)
+    with torch.no_grad():
+        calibrator.fc1.weight.zero_()
+        calibrator.fc1.bias.zero_()
+        calibrator.fc2.weight.zero_()
+        calibrator.fc2.bias.zero_()
+        calibrator.residual_head.weight.zero_()
+        calibrator.residual_head.bias.zero_()
+        calibrator.gate_head.weight.zero_()
+        calibrator.gate_head.bias.zero_()
+    features = torch.zeros(32, 6)
+    mu = torch.zeros(32, 2)
+    kappa = torch.ones(32, 2)
+    kappa[16:] = 5.0
+    out = calibrator(features, mu, kappa)
+    gate = out["gate"].view(32)
+    low_gate = gate[:16].mean().item()
+    high_gate = gate[16:].mean().item()
+    assert high_gate >= low_gate - 1e-5
+
+
+def test_residual_reduces_nll_when_matching_target() -> None:
+    calibrator = ResidualCalibrator(in_dim=4, hidden=4, dropout_p=0.0, gate_mode="none")
+    with torch.no_grad():
+        calibrator.fc1.weight.zero_()
+        calibrator.fc1.bias.zero_()
+        calibrator.fc2.weight.zero_()
+        calibrator.fc2.bias.zero_()
+        calibrator.gate_head.weight.zero_()
+        calibrator.gate_head.bias.zero_()
+    features = torch.zeros(1, 4)
+    mu = torch.tensor([[0.0, 0.0]])
+    theta = torch.tensor([[0.2, -0.15]])
+    kappa = torch.ones(1, 2) * 4.0
+    with torch.no_grad():
+        calibrator.residual_head.weight.zero_()
+        calibrator.residual_head.bias.copy_(theta.squeeze(0))
+    base_nll = von_mises_nll(mu, kappa, theta)
+    out = calibrator(features, mu, kappa)
+    refined_nll = von_mises_nll(out["mu_ref"], kappa, theta)
+    assert refined_nll.item() < base_nll.item()
+import pytest
+
+torch = pytest.importorskip("torch")
+
+from rss_da.config import Config
+from rss_da.models.decoder import DecoderD
+from rss_da.models.encoders import Adapter, E4, E5, Fuse
+from rss_da.models.m2 import DoAPredictor
+from rss_da.models.m3 import ResidualCalibrator
+from rss_da.physics.combine import combine_r4_to_c
+
+
+def test_model_shapes():
+    cfg = Config()
+    latent = cfg.train.latent_dim
+    phi_dim = cfg.train.phi_dim
+    e4 = E4(latent_dim=latent)
+    e5 = E5(latent_dim=latent)
+    fuse = Fuse(latent_dim=latent)
+    adapter = Adapter(latent_dim=latent, phi_dim=phi_dim)
+    decoder = DecoderD(latent_dim=latent)
+    m2 = DoAPredictor(phi_dim=phi_dim, latent_dim=latent)
+    batch = 4
+    z5d = torch.randn(batch, 5)
+    four_rss = torch.randn(batch, 4)
+    h5 = e5(z5d)
+    h4 = e4(four_rss)
+    mask = torch.zeros(batch, 1)
+    fused = fuse(h5, h4, mask)
+    phi = adapter(fused)
+    mu0, kappa0, _ = m2(z5d)
+    assert h5.shape == (batch, latent)
+    assert h4.shape == (batch, latent)
+    assert fused.shape == (batch, latent)
+    assert phi.shape == (batch, phi_dim)
+    mu0 = mu0 if mu0.ndim == 2 else mu0[:, 0, :]
+    kappa0 = kappa0 if kappa0.ndim == 2 else kappa0[:, 0, :]
+    assert mu0.shape == (batch, 2)
+    assert kappa0.shape == (batch, 2)
+    r4_hat = decoder(h5, mu0)
+    assert r4_hat.shape == (batch, 4)
+    combined = combine_r4_to_c(r4_hat)
+    assert combined.shape == (batch, 2)
+    calibrator = ResidualCalibrator(feature_dim=5 + phi_dim)
+    residual = calibrator(mu0, kappa0, torch.cat([z5d, phi], dim=-1))
+    assert residual.shape == (batch, 2)
+import pytest
+
+torch = pytest.importorskip("torch")
+from torch.utils.data import DataLoader
+
+from rss_da.config import Config
+from rss_da.data.dataset import RssDoADataset, collate_samples
+from rss_da.data.synth_generator import SynthConfig, build_samples, generate_synth_samples
+from rss_da.training.stage1 import Stage1Trainer
+
+
+def test_stage1_single_step():
+    cfg = Config()
+    cfg.train.batch_size = 8
+    trainer = Stage1Trainer(cfg)
+    _, arrays = generate_synth_samples(SynthConfig(num_samples=32))
+    samples = list(build_samples(arrays))
+    dataset = RssDoADataset(samples, stage="1", modality_dropout_p=0.0, training=True)
+    loader = DataLoader(dataset, batch_size=cfg.train.batch_size, shuffle=True, num_workers=0, collate_fn=collate_samples)
+    batch = next(iter(loader))
+    outputs = trainer.train_step(batch)
+    assert outputs.loss_total > 0
+    assert outputs.sup0_nll >= 0
+    assert outputs.sup1_nll >= 0

@@ -1,0 +1,466 @@
+﻿"""?뺣젹 ?먯떎 紐⑤뱢."""
+from __future__ import annotations
+
+from typing import Callable, Optional
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+def deep_coral_loss(h_s: torch.Tensor, h_t: torch.Tensor) -> torch.Tensor:
+    """Deep-CORAL 2李??듦퀎 ?뺣젹."""
+
+    if h_s.shape != h_t.shape:
+        raise ValueError("Source/Target features must share shape [B,H]")
+    bsz = h_s.size(0)
+    mean_s = h_s.mean(dim=0, keepdim=True)
+    mean_t = h_t.mean(dim=0, keepdim=True)
+    c_s = (h_s - mean_s).t() @ (h_s - mean_s) / (bsz - 1)
+    c_t = (h_t - mean_t).t() @ (h_t - mean_t) / (bsz - 1)
+    loss = F.mse_loss(c_s, c_t)
+    return loss
+
+
+class GradientReversalFunction(torch.autograd.Function):
+    """Gradient Reversal."""
+
+    @staticmethod
+    def forward(ctx, inputs: torch.Tensor, lambda_: float) -> torch.Tensor:
+        ctx.lambda_ = lambda_
+        return inputs.view_as(inputs)
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, None]:
+        return -ctx.lambda_ * grad_output, None
+
+
+class GradientReversalLayer(nn.Module):
+    """nn.Module wrapper."""
+
+    def __init__(self, lambda_: float = 1.0) -> None:
+        super().__init__()
+        self.lambda_ = lambda_
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        return GradientReversalFunction.apply(inputs, self.lambda_)
+
+
+class DomainAdversarialLoss(nn.Module):
+    """DANN ?먯떎 ?섑띁."""
+
+    def __init__(self, domain_classifier: nn.Module, lambda_: float = 1.0) -> None:
+        super().__init__()
+        self.domain_classifier = domain_classifier
+        self.grl = GradientReversalLayer(lambda_)
+
+    def forward(self, features: torch.Tensor, domain_labels: torch.Tensor) -> torch.Tensor:
+        logits = self.domain_classifier(self.grl(features))  # torch.FloatTensor[B,num_domains]
+        return F.cross_entropy(logits, domain_labels.long())
+
+
+def cdan_loss(
+    domain_classifier: nn.Module,
+    features: torch.Tensor,  # torch.FloatTensor[B,H]
+    class_logits: torch.Tensor,  # torch.FloatTensor[B,C]
+    domain_labels: torch.Tensor,  # torch.LongTensor[B]
+    lambda_: float = 1.0,
+    entropy_weight: Optional[torch.Tensor] = None,  # torch.FloatTensor[B]
+) -> torch.Tensor:
+    """CDAN 議곌굔遺 ?곷? ?뺣젹."""
+
+    probs = torch.softmax(class_logits, dim=-1)  # torch.FloatTensor[B,C]
+    outer = torch.bmm(probs.unsqueeze(2), features.unsqueeze(1))  # torch.FloatTensor[B,C,H]
+    joint = outer.view(features.size(0), -1)
+    joint = GradientReversalFunction.apply(joint, lambda_)
+    logits = domain_classifier(joint)
+    loss = F.cross_entropy(logits, domain_labels.long(), reduction="none")
+    if entropy_weight is not None:
+        weights = entropy_weight.view(-1)
+        loss = loss * weights
+        loss = loss.sum() / torch.clamp(weights.sum(), min=1.0)
+    else:
+        loss = loss.mean()
+    return loss
+
+
+def apply_alignment(
+    method: str,
+    domain_classifier: Optional[nn.Module],
+    features_s: torch.Tensor,
+    features_t: torch.Tensor,
+    domain_labels: Optional[torch.Tensor] = None,
+    class_logits: Optional[torch.Tensor] = None,
+    lambda_: float = 1.0,
+    entropy_weight: Optional[torch.Tensor] = None,
+    callback: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
+) -> torch.Tensor:
+    """?뺣젹 ?먯떎 dispatcher."""
+
+    method = (method or "").lower()
+    if method == "coral":
+        return deep_coral_loss(features_s, features_t)
+    if method == "dann":
+        if domain_classifier is None or domain_labels is None:
+            raise ValueError("DANN requires domain classifier and labels")
+        loss = DomainAdversarialLoss(domain_classifier, lambda_)(features_s, domain_labels)
+        if callback is not None:
+            callback(loss)
+        return loss
+    if method == "cdan":
+        if domain_classifier is None or domain_labels is None or class_logits is None:
+            raise ValueError("CDAN requires classifier, labels, logits")
+        loss = cdan_loss(domain_classifier, features_s, class_logits, domain_labels, lambda_=lambda_, entropy_weight=entropy_weight)
+        if callback is not None:
+            callback(loss)
+        return loss
+    return torch.zeros(1, device=features_s.device)
+
+
+__all__ = [
+    "deep_coral_loss",
+    "GradientReversalLayer",
+    "DomainAdversarialLoss",
+    "cdan_loss",
+    "apply_alignment",
+]
+"""?먯떎 媛以??쒖뼱."""
+from __future__ import annotations
+
+from typing import Dict, Iterable, List
+
+import torch
+import torch.nn as nn
+
+
+class GradNormController(nn.Module):
+    """GradNorm 湲곕컲 媛以?議곗젙."""
+
+    def __init__(self, task_names: Iterable[str], alpha: float = 0.5, lr: float = 0.025) -> None:
+        super().__init__()
+        self.task_names: List[str] = list(task_names)
+        if not self.task_names:
+            raise ValueError("At least one task required")
+        self.alpha = alpha
+        self.lr = lr
+        self.log_weights = nn.Parameter(torch.zeros(len(self.task_names)))
+        self.register_buffer("initial_losses", torch.ones(len(self.task_names)))
+        self._initialized = False
+
+    def initialize(self, losses: Dict[str, torch.Tensor]) -> None:
+        values = torch.stack([losses[name].detach() for name in self.task_names])
+        self.initial_losses.copy_(values)
+        self._initialized = True
+
+    def forward(
+        self,
+        losses: Dict[str, torch.Tensor],
+        shared_params: Iterable[torch.nn.Parameter],
+    ) -> Dict[str, torch.Tensor]:
+        """媛以묒튂 ?ъ쟾 諛섑솚."""
+
+        if not self._initialized:
+            self.initialize(losses)
+        params = tuple(shared_params)
+        weights = torch.softmax(self.log_weights, dim=0) * len(self.task_names)
+        grad_norms = []
+        for name, weight in zip(self.task_names, weights):
+            loss = losses[name] * weight
+            grads = torch.autograd.grad(loss, params, retain_graph=True, allow_unused=True)
+            total = torch.zeros(1, device=loss.device)
+            for g in grads:
+                if g is not None:
+                    total = total + g.norm(p=2)
+            grad_norms.append(total)
+        grad_norms = torch.stack(grad_norms).view(-1)
+        with torch.no_grad():
+            loss_vec = torch.stack([losses[name].detach() for name in self.task_names])
+            loss_ratio = loss_vec / self.initial_losses
+            inverse_rate = loss_ratio / loss_ratio.mean()
+            target = grad_norms.mean() * (inverse_rate ** self.alpha)
+            diff = grad_norms - target
+            self.log_weights.data = self.log_weights.data - self.lr * diff
+        weights = torch.softmax(self.log_weights, dim=0)
+        return {name: weight for name, weight in zip(self.task_names, weights)}
+
+
+class UncertaintyWeighting(nn.Module):
+    """Kendall 遺덊솗?ㅻ룄 媛以?"""
+
+    def __init__(self, task_names: Iterable[str]) -> None:
+        super().__init__()
+        self.task_names: List[str] = list(task_names)
+        if not self.task_names:
+            raise ValueError("At least one task required")
+        self.log_sigma = nn.Parameter(torch.zeros(len(self.task_names)))
+
+    def forward(self, losses: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        weights = torch.exp(-self.log_sigma)
+        weighted = {}
+        for idx, name in enumerate(self.task_names):
+            loss = losses[name]
+            weighted[name] = weights[idx] * loss + self.log_sigma[idx]
+        weighted["total"] = torch.stack(list(weighted.values())).sum()
+        return weighted
+
+
+__all__ = ["GradNormController", "UncertaintyWeighting"]
+"""吏??利앸쪟 ?먯떎."""
+from __future__ import annotations
+
+from typing import Dict, Optional
+
+import torch
+import torch.nn.functional as F
+
+from .vm_nll import scale_kappa
+
+
+def _a_function(kappa: torch.Tensor) -> torch.Tensor:
+    """A(kappa)=I1/I0."""
+
+    kappa = torch.clamp(kappa, min=1e-6)
+    return torch.i1(kappa) / (torch.i0(kappa) + 1e-8)
+
+
+def output_kd_loss(
+    mu_student: torch.Tensor,  # torch.FloatTensor[B,2]
+    kappa_student: torch.Tensor,  # torch.FloatTensor[B,2]
+    mu_teacher: torch.Tensor,  # torch.FloatTensor[B,2]
+    kappa_teacher: torch.Tensor,  # torch.FloatTensor[B,2]
+    temperature: float = 1.0,
+    gating: Optional[torch.Tensor] = None,  # torch.FloatTensor[B,1] or [B]
+    reduction: str = "mean",
+) -> torch.Tensor:
+    """von-Mises 異쒕젰 利앸쪟(KL)."""
+
+    if temperature <= 0:
+        raise ValueError("temperature must be > 0")
+    if not (mu_student.shape == kappa_student.shape == mu_teacher.shape == kappa_teacher.shape):
+        raise ValueError("mu/kappa tensors must share shape [B,2]")
+    tau = float(temperature)
+    kappa_s = scale_kappa(kappa_student, tau)  # torch.FloatTensor[B,2]
+    kappa_t = scale_kappa(kappa_teacher, tau)
+    a_t = _a_function(kappa_t)
+    cos_delta = torch.cos(mu_student - mu_teacher)
+    two_pi = torch.tensor(2 * torch.pi, device=mu_student.device, dtype=mu_student.dtype)
+    ce = -kappa_s * a_t * cos_delta + torch.log(two_pi)
+    ce = ce + torch.log(torch.i0(kappa_s) + torch.finfo(kappa_s.dtype).eps)
+    entropy_t = torch.log(two_pi) + torch.log(torch.i0(kappa_t) + torch.finfo(kappa_t.dtype).eps)
+    entropy_t = entropy_t - kappa_t * a_t
+    kl = (ce - entropy_t).sum(dim=-1)  # torch.FloatTensor[B]
+    if gating is not None:
+        gate = gating.view(-1)
+        kl = kl * gate
+    if reduction == "mean":
+        return kl.mean()
+    if reduction == "sum":
+        return kl.sum()
+    return kl
+
+
+def feature_kd_loss(
+    h_student: torch.Tensor,  # torch.FloatTensor[B,H]
+    h_teacher: torch.Tensor,  # torch.FloatTensor[B,H]
+    attn_map_student: Optional[torch.Tensor] = None,  # torch.FloatTensor[B,C,H',W'] optional
+    attn_map_teacher: Optional[torch.Tensor] = None,  # torch.FloatTensor[B,C,H',W'] optional
+    gating: Optional[torch.Tensor] = None,  # torch.FloatTensor[B]
+    reduction: str = "mean",
+) -> torch.Tensor:
+    """?쒗쁽 利앸쪟(L2 + AT)."""
+
+    if h_student.shape != h_teacher.shape:
+        raise ValueError("Feature shapes must match")
+    mse = F.mse_loss(h_student, h_teacher, reduction="none").mean(dim=-1)  # torch.FloatTensor[B]
+    loss = mse
+    if attn_map_student is not None and attn_map_teacher is not None:
+        attn_s = F.normalize(attn_map_student.flatten(1), dim=-1)
+        attn_t = F.normalize(attn_map_teacher.flatten(1), dim=-1)
+        at_loss = F.mse_loss(attn_s, attn_t, reduction="none").mean(dim=-1)
+        loss = loss + at_loss
+    if gating is not None:
+        loss = loss * gating.view(-1)
+    if reduction == "mean":
+        return loss.mean()
+    if reduction == "sum":
+        return loss.sum()
+    return loss
+
+
+def kd_loss_bundle(
+    outputs: Dict[str, torch.Tensor],
+    temperature: float,
+    gating: Optional[torch.Tensor] = None,
+) -> Dict[str, torch.Tensor]:
+    """異쒕젰/?쒗쁽 KD ?먯떎 臾띠쓬."""
+
+    mu_s = outputs["mu_student"]
+    kappa_s = outputs["kappa_student"]
+    mu_t = outputs["mu_teacher"]
+    kappa_t = outputs["kappa_teacher"]
+    kl = output_kd_loss(mu_s, kappa_s, mu_t, kappa_t, temperature=temperature, gating=gating)
+    feat_loss = feature_kd_loss(outputs["h_student"], outputs["h_teacher"], gating=gating)
+    return {"kd_out": kl, "kd_feat": feat_loss, "kd_total": kl + feat_loss}
+
+
+__all__ = ["output_kd_loss", "feature_kd_loss", "kd_loss_bundle"]
+"""?ш뎄??諛??꾨갑 ?쇨????먯떎."""
+from __future__ import annotations
+
+from typing import Dict, Optional
+
+import torch
+import torch.nn.functional as F
+
+from rss_da.physics.combine import combine_r4_rel_to_c_rel, combine_r4_to_c
+from rss_da.physics.pathloss import PathlossConstraint
+
+
+def _safe_mse(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """shape ?쇱튂 ?뺤씤 ??MSE."""
+
+    if pred.shape != target.shape:
+        raise ValueError(f"Shape mismatch: {pred.shape} vs {target.shape}")
+    return F.mse_loss(pred, target)
+
+
+def recon_loss(
+    r4_hat_dbm: torch.Tensor,  # torch.FloatTensor[B,4]
+    r4_gt_dbm: Optional[torch.Tensor] = None,  # torch.FloatTensor[B,4]
+    c_meas_dbm: Optional[torch.Tensor] = None,  # torch.FloatTensor[B,2]
+    c_meas_rel_db: Optional[torch.Tensor] = None,  # torch.FloatTensor[B,2]
+    input_scale: str = "relative_db",
+    physics_ctx: Optional[Dict[str, object]] = None,
+    mix_variance_floor: float = 1.0,
+) -> Dict[str, torch.Tensor]:
+    """?꾨갑 ?쇨???諛?臾쇰━ ?쒖빟 ?먯떎."""
+
+    if r4_hat_dbm.ndim != 2 or r4_hat_dbm.size(-1) != 4:
+        raise ValueError("r4_hat_dbm must have shape [B,4]")
+    losses: Dict[str, torch.Tensor] = {}
+
+    scale = input_scale.lower()
+    if scale == "relative_db":
+        if c_meas_rel_db is not None and c_meas_rel_db.numel() > 0:
+            c_hat_rel = combine_r4_rel_to_c_rel(r4_hat_dbm)
+            mix_raw = _safe_mse(c_hat_rel, c_meas_rel_db)
+            variance = torch.var(c_meas_rel_db.detach().view(-1), unbiased=False)
+            variance = torch.clamp(variance, min=mix_variance_floor)
+            losses["mix_raw"] = mix_raw
+            losses["mix_var"] = variance
+            losses["mix"] = mix_raw / variance
+        else:
+            zero = r4_hat_dbm.new_zeros(1)
+            losses["mix_raw"] = zero
+            losses["mix_var"] = r4_hat_dbm.new_ones(1)
+            losses["mix"] = zero
+    else:
+        if c_meas_dbm is not None:
+            c_hat = combine_r4_to_c(r4_hat_dbm)  # torch.FloatTensor[B,2]
+            mix_raw = _safe_mse(c_hat, c_meas_dbm)
+            losses["mix_raw"] = mix_raw
+            losses["mix_var"] = r4_hat_dbm.new_ones(1)
+            losses["mix"] = mix_raw
+        else:
+            zero = r4_hat_dbm.new_zeros(1)
+            losses["mix_raw"] = zero
+            losses["mix_var"] = r4_hat_dbm.new_ones(1)
+            losses["mix"] = zero
+
+    if r4_gt_dbm is not None and r4_gt_dbm.numel() > 0:
+        losses["data"] = _safe_mse(r4_hat_dbm, r4_gt_dbm)
+    else:
+        losses["data"] = torch.zeros(1, device=r4_hat_dbm.device)
+
+    phys_loss = torch.zeros(1, device=r4_hat_dbm.device)
+    if physics_ctx:
+        pathloss_spec = physics_ctx.get("pathloss") if isinstance(physics_ctx, dict) else None
+        if isinstance(pathloss_spec, dict):
+            constraint = pathloss_spec.get("constraint")
+            distance_m = pathloss_spec.get("distance_m")
+            if isinstance(constraint, PathlossConstraint) and distance_m is not None:
+                distance_m = distance_m.to(r4_hat_dbm.device)
+                if distance_m.ndim == 2 and distance_m.size(-1) == r4_hat_dbm.size(-1):
+                    distance_m = distance_m.mean(dim=-1)
+                phys_loss = phys_loss + constraint.penalty(r4_hat_dbm.mean(dim=-1), distance_m)
+        antenna_spec = physics_ctx.get("antenna") if isinstance(physics_ctx, dict) else None
+        if isinstance(antenna_spec, dict):
+            penalty_fn = antenna_spec.get("penalty_fn")
+            if callable(penalty_fn):
+                phys_loss = phys_loss + penalty_fn(r4_hat_dbm)
+        extra_penalties = physics_ctx.get("extra") if isinstance(physics_ctx, dict) else None
+        if isinstance(extra_penalties, (list, tuple)):
+            for fn in extra_penalties:
+                if callable(fn):
+                    phys_loss = phys_loss + fn(r4_hat_dbm)
+    losses["phys"] = phys_loss
+    losses["total"] = losses["mix"] + losses["data"] + losses["phys"]
+    return losses
+
+
+__all__ = ["recon_loss"]
+"""von-Mises NLL 諛?觀 ?⑤룄蹂댁젙."""
+from __future__ import annotations
+
+import torch
+
+
+def _log_modified_bessel0(x: torch.Tensor) -> torch.Tensor:
+    """log I0(x) ?덉젙??"""
+
+    return torch.log(torch.i0(x) + torch.finfo(x.dtype).eps)
+
+
+def von_mises_nll(
+    mu_pred: torch.Tensor,  # torch.FloatTensor[B,2]
+    kappa_pred: torch.Tensor,  # torch.FloatTensor[B,2]
+    theta_gt: torch.Tensor,  # torch.FloatTensor[B,2]
+    reduction: str = "mean",
+) -> torch.Tensor:
+    """von-Mises ?뚯쓽 濡쒓렇?곕룄."""
+
+    if mu_pred.shape != kappa_pred.shape or mu_pred.shape != theta_gt.shape:
+        raise ValueError("mu, kappa, theta must share shape [B,2]")
+    diff = torch.atan2(torch.sin(mu_pred - theta_gt), torch.cos(mu_pred - theta_gt))  # torch.FloatTensor[B,2]
+    log_i0 = _log_modified_bessel0(torch.clamp(kappa_pred, min=1e-6))
+    two_pi = torch.tensor(2 * torch.pi, device=mu_pred.device, dtype=mu_pred.dtype)
+    nll = -kappa_pred * torch.cos(diff) + log_i0 + torch.log(two_pi)
+    nll = nll.sum(dim=-1)  # torch.FloatTensor[B]
+    if reduction == "mean":
+        return nll.mean()
+    if reduction == "sum":
+        return nll.sum()
+    return nll
+
+
+def scale_kappa(kappa: torch.Tensor, temperature: float) -> torch.Tensor:
+    """觀 ?⑤룄蹂댁젙."""
+
+    if temperature <= 0:
+        raise ValueError("temperature must be > 0")
+    return kappa / temperature
+
+
+__all__ = ["von_mises_nll", "scale_kappa"]
+"""?먯떎 ?⑦궎吏."""
+from .vm_nll import scale_kappa, von_mises_nll
+from .recon import recon_loss
+from .kd import kd_loss_bundle, feature_kd_loss, output_kd_loss
+from .align import apply_alignment, cdan_loss, deep_coral_loss, DomainAdversarialLoss, GradientReversalLayer
+from .balance import GradNormController, UncertaintyWeighting
+
+__all__ = [
+    "von_mises_nll",
+    "scale_kappa",
+    "recon_loss",
+    "output_kd_loss",
+    "feature_kd_loss",
+    "kd_loss_bundle",
+    "deep_coral_loss",
+    "GradientReversalLayer",
+    "DomainAdversarialLoss",
+    "cdan_loss",
+    "apply_alignment",
+    "GradNormController",
+    "UncertaintyWeighting",
+]

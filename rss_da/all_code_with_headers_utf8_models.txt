@@ -1,0 +1,479 @@
+﻿"""紐⑤뜽 怨듯넻 釉붾줉."""
+from __future__ import annotations
+
+from typing import Callable
+
+import torch
+import torch.nn as nn
+
+
+def get_activation(name: str) -> Callable[[torch.Tensor], torch.Tensor]:
+    """?쒖꽦???⑥닔 ?⑺넗由?"""
+
+    name = name.lower()
+    if name == "relu":
+        return nn.ReLU()
+    if name == "gelu":
+        return nn.GELU()
+    if name == "silu":
+        return nn.SiLU()
+    raise ValueError(f"Unsupported activation: {name}")
+
+
+class MLPBlock(nn.Module):
+    """Linear + Norm + Activation + Dropout 釉붾줉."""
+
+    def __init__(
+        self,
+        in_dim: int,
+        out_dim: int,
+        activation: str = "gelu",
+        dropout_p: float = 0.0,
+        use_layer_norm: bool = True,
+    ) -> None:
+        super().__init__()
+        self.linear = nn.Linear(in_dim, out_dim)
+        self.norm = nn.LayerNorm(out_dim) if use_layer_norm else nn.Identity()
+        self.activation = get_activation(activation)
+        self.dropout = nn.Dropout(dropout_p)
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        nn.init.xavier_uniform_(self.linear.weight)
+        if self.linear.bias is not None:
+            nn.init.zeros_(self.linear.bias)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """?꾨갑 怨꾩궛.
+
+        Args:
+            x: torch.FloatTensor[B,in_dim]
+        Returns:
+            torch.FloatTensor[B,out_dim]
+        """
+
+        x = self.linear(x)
+        x = self.norm(x)
+        x = self.activation(x)
+        x = self.dropout(x)
+        return x
+
+
+def init_last_bias_zero(module: nn.Module) -> None:
+    """留덉?留?Linear bias瑜?0?쇰줈 珥덇린??"""
+
+    if isinstance(module, nn.Linear) and module.bias is not None:
+        nn.init.zeros_(module.bias)
+
+
+__all__ = ["MLPBlock", "init_last_bias_zero", "get_activation"]
+"""Decoder D: (h, mu) -> 4RSS_hat."""
+from __future__ import annotations
+
+from typing import Optional
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from ..physics.units import mw_to_dbm
+from .blocks import MLPBlock
+
+
+class DecoderD(nn.Module):
+    """Latent ?듯빀 ?쒗쁽怨?異붿젙 媛곷룄瑜??댁슜??4RSS瑜?蹂듭썝."""
+
+    def __init__(
+        self,
+        latent_dim: int = 128,
+        angle_dim: int = 2,
+        hidden_dim: Optional[int] = None,
+        dropout_p: float = 0.1,
+        min_power_mw: float = 1e-6,
+    ) -> None:
+        super().__init__()
+        hidden = hidden_dim or latent_dim
+        in_dim = latent_dim + angle_dim
+        self.trunk = nn.Sequential(
+            MLPBlock(in_dim, hidden, dropout_p=dropout_p),
+            MLPBlock(hidden, hidden, dropout_p=dropout_p),
+        )
+        self.head = nn.Linear(hidden, 4)
+        nn.init.xavier_uniform_(self.head.weight)
+        if self.head.bias is not None:
+            nn.init.zeros_(self.head.bias)
+        self.min_power_mw = float(min_power_mw)
+
+    def forward(self, h: torch.Tensor, mu: torch.Tensor) -> torch.Tensor:
+        """?꾨갑 怨꾩궛.
+
+        Args:
+            h: torch.FloatTensor[B,H]
+            mu: torch.FloatTensor[B,2]
+        Returns:
+            torch.FloatTensor[B,4] dBm
+        """
+
+        x = torch.cat([h, mu], dim=-1)
+        latent = self.trunk(x)
+        power_raw = self.head(latent)  # torch.FloatTensor[B,4]
+        power_mw = F.softplus(power_raw) + self.min_power_mw
+        r4_hat_dbm = mw_to_dbm(power_mw)
+        return r4_hat_dbm
+
+
+__all__ = ["DecoderD"]
+"""?몄퐫??諛??대뙌??紐⑤뱢."""
+from __future__ import annotations
+
+from typing import Optional
+
+import torch
+import torch.nn as nn
+
+from .blocks import MLPBlock
+
+
+class E4(nn.Module):
+    """4RSS(dBm) ?낅젰 ?몄퐫??"""
+
+    def __init__(self, latent_dim: int = 128, hidden_dim: Optional[int] = None, dropout_p: float = 0.1) -> None:
+        super().__init__()
+        hidden = hidden_dim or latent_dim
+        self.net = nn.Sequential(
+            MLPBlock(4, hidden, dropout_p=dropout_p),
+            MLPBlock(hidden, latent_dim, dropout_p=dropout_p),
+        )
+
+    def forward(self, r4_dbm: torch.Tensor) -> torch.Tensor:
+        """?꾨갑 怨꾩궛.
+
+        Args:
+            r4_dbm: torch.FloatTensor[B,4]
+        Returns:
+            torch.FloatTensor[B,latent_dim]
+        """
+
+        return self.net(r4_dbm)
+
+
+class E5(nn.Module):
+    """z5d ?낅젰 ?몄퐫??"""
+
+    def __init__(self, latent_dim: int = 128, hidden_dim: Optional[int] = None, dropout_p: float = 0.1) -> None:
+        super().__init__()
+        hidden = hidden_dim or latent_dim
+        self.net = nn.Sequential(
+            MLPBlock(5, hidden, dropout_p=dropout_p),
+            MLPBlock(hidden, latent_dim, dropout_p=dropout_p),
+        )
+
+    def forward(self, z5d: torch.Tensor) -> torch.Tensor:
+        """?꾨갑 怨꾩궛.
+
+        Args:
+            z5d: torch.FloatTensor[B,5]
+        Returns:
+            torch.FloatTensor[B,latent_dim]
+        """
+
+        return self.net(z5d)
+
+
+class Fuse(nn.Module):
+    """HeMIS/ModDrop ?ㅽ???紐⑤떖由ы떚 ?듯빀."""
+
+    def __init__(self, latent_dim: int = 128, dropout_p: float = 0.1) -> None:
+        super().__init__()
+        self.latent_dim = latent_dim
+        self.dropout = nn.Dropout(dropout_p)
+        self.norm = nn.LayerNorm(latent_dim)
+        self.residual = MLPBlock(latent_dim, latent_dim, dropout_p=dropout_p)
+
+    def forward(
+        self,
+        h5: torch.Tensor,
+        h4_hat: torch.Tensor,
+        mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """?꾨갑 怨꾩궛.
+
+        Args:
+            h5: torch.FloatTensor[B,H]
+            h4_hat: torch.FloatTensor[B,H]
+            mask: torch.FloatTensor[B,1], 1?대㈃ ?좊ː???믪쓬
+        Returns:
+            torch.FloatTensor[B,H]
+        """
+
+        if mask.ndim == 1:
+            mask = mask.unsqueeze(-1)
+        mask = mask.clamp(0.0, 1.0)
+        ones = torch.ones_like(mask)
+        weights = torch.cat([ones, mask], dim=-1)  # torch.FloatTensor[B,2]
+        weights = weights / weights.sum(dim=-1, keepdim=True).clamp(min=1e-6)
+        h_stack = torch.stack([h5, h4_hat], dim=1)  # torch.FloatTensor[B,2,H]
+        fused = (h_stack * weights.unsqueeze(-1)).sum(dim=1)  # torch.FloatTensor[B,H]
+        fused = self.norm(fused)
+        fused = fused + self.dropout(self.residual(fused))
+        return fused
+
+
+class Adapter(nn.Module):
+    """Latent h瑜?phi 怨듦컙?쇰줈 ?ъ긽."""
+
+    def __init__(self, latent_dim: int = 128, phi_dim: int = 16, dropout_p: float = 0.1) -> None:
+        super().__init__()
+        self.net = nn.Sequential(
+            MLPBlock(latent_dim, latent_dim, dropout_p=dropout_p),
+            nn.Linear(latent_dim, phi_dim),
+        )
+        nn.init.xavier_uniform_(self.net[-1].weight)
+        if self.net[-1].bias is not None:
+            nn.init.zeros_(self.net[-1].bias)
+
+    def forward(self, h: torch.Tensor) -> torch.Tensor:
+        """?꾨갑 怨꾩궛.
+
+        Args:
+            h: torch.FloatTensor[B,H]
+        Returns:
+            torch.FloatTensor[B,P]
+        """
+
+        return self.net(h)
+
+
+__all__ = ["E4", "E5", "Fuse", "Adapter"]
+"""DoA Predictor (M2)."""
+from __future__ import annotations
+
+import math
+from typing import Optional, Tuple
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from .blocks import MLPBlock
+
+
+class DoAPredictor(nn.Module):
+    """von-Mises 湲곕컲 DoA 異붿젙湲?"""
+
+    def __init__(
+        self,
+        phi_dim: int = 16,
+        latent_dim: int = 128,
+        z_dim: int = 5,
+        hidden_dim: Optional[int] = None,
+        dropout_p: float = 0.1,
+        mixture_components: int = 1,
+        kappa_min: float = 1e-3,
+    ) -> None:
+        super().__init__()
+        self.phi_dim = phi_dim
+        self.z_dim = z_dim
+        self.in_dim = z_dim + phi_dim
+        hidden = hidden_dim or latent_dim
+        self.backbone = nn.Sequential(
+            MLPBlock(self.in_dim, hidden, dropout_p=dropout_p),
+            MLPBlock(hidden, hidden, dropout_p=dropout_p),
+        )
+        self.mixture_components = mixture_components
+        out_dim = 2 * mixture_components
+        self.mu_head = nn.Linear(hidden, out_dim)
+        self.kappa_head = nn.Linear(hidden, out_dim)
+        nn.init.xavier_uniform_(self.mu_head.weight)
+        nn.init.xavier_uniform_(self.kappa_head.weight)
+        nn.init.zeros_(self.mu_head.bias)
+        nn.init.zeros_(self.kappa_head.bias)
+        self.kappa_min = kappa_min
+        if mixture_components > 1:
+            self.logits_head = nn.Linear(hidden, mixture_components)
+            nn.init.xavier_uniform_(self.logits_head.weight)
+            nn.init.zeros_(self.logits_head.bias)
+        else:
+            self.logits_head = None
+
+    def forward(
+        self,
+        z5d: torch.Tensor,
+        phi: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+        """?꾨갑 怨꾩궛.
+
+        Args:
+            z5d: torch.FloatTensor[B,5]
+            phi: torch.FloatTensor[B,P] or None
+        Returns:
+            mu: torch.FloatTensor[B,2] or [B,K,2]
+            kappa: torch.FloatTensor[B,2] or [B,K,2]
+            logits: torch.FloatTensor[B,K] or None
+        """
+
+        if phi is None:
+            phi = z5d.new_zeros((z5d.size(0), self.phi_dim))
+        if phi.size(-1) != self.phi_dim:
+            raise ValueError(f"phi dimension mismatch: expected {self.phi_dim}, got {phi.size(-1)}")
+        x = torch.cat([z5d, phi], dim=-1)
+        hidden = self.backbone(x)
+        mu_raw = self.mu_head(hidden)  # torch.FloatTensor[B,2*K]
+        kappa_raw = self.kappa_head(hidden)  # torch.FloatTensor[B,2*K]
+        mu = torch.tanh(mu_raw).view(z5d.size(0), self.mixture_components, 2) * math.pi
+        kappa = F.softplus(kappa_raw).view(z5d.size(0), self.mixture_components, 2) + self.kappa_min
+        if self.mixture_components == 1:
+            mu = mu.squeeze(1)
+            kappa = kappa.squeeze(1)
+        logits: Optional[torch.Tensor]
+        if self.logits_head is not None:
+            logits = self.logits_head(hidden)
+        else:
+            logits = None
+        return mu, kappa, logits
+
+
+__all__ = ["DoAPredictor"]
+"""Residual calibrator with confidence gating."""
+from __future__ import annotations
+
+import math
+from typing import Dict, Optional
+
+import torch
+import torch.nn as nn
+
+
+def _wrap_to_pi(x: torch.Tensor) -> torch.Tensor:
+    """Wrap angles to (?믋, ?]."""
+
+    return (x + math.pi) % (2 * math.pi) - math.pi
+
+
+class ResidualCalibrator(nn.Module):
+    """Predict residual angle corrections and confidence gates."""
+
+    SUPPORTED_MODES = {"none", "kappa", "inv_kappa", "mcdrop"}
+
+    def __init__(
+        self,
+        in_dim: int,
+        hidden: int = 128,
+        dropout_p: float = 0.1,
+        delta_max_rad: float = math.radians(10.0),
+        gate_mode: str = "kappa",
+        gate_tau: float = 1.0,
+    ) -> None:
+        super().__init__()
+        if gate_mode not in self.SUPPORTED_MODES:
+            raise ValueError(f"Unsupported gate mode: {gate_mode}")
+        self.delta_max_rad = float(delta_max_rad)
+        self.gate_mode = gate_mode
+        self.gate_tau = float(gate_tau)
+        self.layernorm = nn.LayerNorm(in_dim)
+        self.fc1 = nn.Linear(in_dim, hidden)
+        self.fc2 = nn.Linear(hidden, hidden)
+        self.act = nn.GELU()
+        self.dropout = nn.Dropout(p=dropout_p)
+        self.residual_head = nn.Linear(hidden, 2)
+        self.gate_head = nn.Linear(hidden, 1)
+        self.kappa_scale = nn.Parameter(torch.tensor(1.0))
+        self.kappa_bias = nn.Parameter(torch.tensor(0.0))
+        nn.init.zeros_(self.residual_head.bias)
+        nn.init.zeros_(self.gate_head.bias)
+
+    def forward(
+        self,
+        features: torch.Tensor,  # torch.FloatTensor[B,D]
+        mu: torch.Tensor,  # torch.FloatTensor[B,2]
+        kappa: torch.Tensor,  # torch.FloatTensor[B,2]
+        ramp: float = 1.0,
+        delta_max: Optional[float] = None,
+        gain: float = 1.0,
+        gate_threshold: float = 0.5,
+        extras: Optional[Dict[str, torch.Tensor]] = None,
+    ) -> Dict[str, torch.Tensor]:
+        """Compute residual corrections."""
+
+        if features.numel() == 0:
+            raise ValueError("ResidualCalibrator requires non-empty features")
+        ramp = float(ramp)
+        gain = float(gain)
+        effective_max = float(self.delta_max_rad if delta_max is None else delta_max)
+        effective_max = max(0.0, min(self.delta_max_rad, effective_max))
+        x = self.layernorm(features)
+        h = self.act(self.fc1(x))
+        h = self.dropout(h)
+        h = self.act(self.fc2(h))
+        h = self.dropout(h)
+        delta_unit = torch.tanh(self.residual_head(h))  # torch.FloatTensor[B,2]
+        delta = delta_unit * effective_max
+        gate_logits = self.gate_head(h)
+        aux: Dict[str, torch.Tensor] = {}
+        if self.gate_mode == "none":
+            gate_raw = torch.ones_like(gate_logits)
+        elif self.gate_mode in {"kappa", "inv_kappa"}:
+            sample_kappa = kappa.mean(dim=-1, keepdim=True)
+            mean_kappa = sample_kappa.mean(dim=0, keepdim=True)
+            std_kappa = sample_kappa.std(dim=0, keepdim=True, unbiased=False).clamp(min=1e-6)
+            norm_kappa = (sample_kappa - mean_kappa) / std_kappa
+            if self.gate_mode == "inv_kappa":
+                norm_kappa = -norm_kappa
+            aux["norm_kappa"] = norm_kappa.detach()
+            scaled = (norm_kappa * self.kappa_scale + self.kappa_bias) / max(self.gate_tau, 1e-6)
+            gate_raw = torch.sigmoid(gate_logits + scaled)
+        else:  # mcdrop
+            unc = None
+            if extras is not None:
+                unc = extras.get("uncertainty")
+            if unc is None:
+                aux["mcdrop_fallback"] = torch.ones(1, device=features.device)
+                sample_kappa = kappa.mean(dim=-1, keepdim=True)
+                mean_kappa = sample_kappa.mean(dim=0, keepdim=True)
+                std_kappa = sample_kappa.std(dim=0, keepdim=True, unbiased=False).clamp(min=1e-6)
+                norm_kappa = (sample_kappa - mean_kappa) / std_kappa
+                scaled = (norm_kappa * self.kappa_scale + self.kappa_bias) / max(self.gate_tau, 1e-6)
+                gate_raw = torch.sigmoid(gate_logits + scaled)
+            else:
+                scaled_unc = -unc / max(self.gate_tau, 1e-6)
+                gate_raw = torch.sigmoid(gate_logits + scaled_unc)
+                aux["uncertainty"] = unc.detach()
+        gate = torch.clamp(gate_raw * ramp, min=0.0, max=1.0)
+        keep_mask = gate >= gate_threshold
+        delta_effect = gate * delta * gain
+        if effective_max <= 1e-6 or gain <= 1e-6:
+            clip_mask = torch.zeros_like(delta, dtype=torch.bool)
+        else:
+            clip_mask = keep_mask & (delta.abs() >= (effective_max - 1e-6))
+        mu_ref = _wrap_to_pi(mu + delta_effect)
+        return {
+            "delta_unit": delta_unit,
+            "delta": delta,
+            "gate": gate,
+            "gate_raw": gate_raw,
+            "keep_mask": keep_mask,
+            "mu_ref": mu_ref,
+            "delta_effect": delta_effect,
+            "clip_mask": clip_mask,
+            "aux": aux,
+        }
+
+
+__all__ = ["ResidualCalibrator"]
+"""紐⑤뜽 ?쒕툕?⑦궎吏 珥덇린??"""
+from .blocks import MLPBlock
+from .decoder import DecoderD
+from .encoders import Adapter, E4, E5, Fuse
+from .m2 import DoAPredictor
+from .m3 import ResidualCalibrator
+
+__all__ = [
+    "MLPBlock",
+    "DecoderD",
+    "Adapter",
+    "E4",
+    "E5",
+    "Fuse",
+    "DoAPredictor",
+    "ResidualCalibrator",
+]

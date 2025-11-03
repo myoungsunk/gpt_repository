@@ -1,0 +1,194 @@
+[2025-11-03 14:51:20,322][INFO] Console log level set to INFO
+[2025-11-03 14:51:20,322][INFO] File logging enabled at runs/s1_phaseB_m3/train.log
+[2025-11-03 14:51:20,322][INFO] Starting Stage-1 training for 60 epochs
+[2025-11-03 14:51:21,241][INFO] Stage-1 trainer initialized on device: cpu
+[2025-11-03 14:51:21,241][WARNING] rss_da\data\raw_data\standardized_v2\stage1_rel.csv not found. Falling back to synthetic samples.
+[2025-11-03 14:51:21,243][INFO] Generated synthetic 1 dataset with 128 samples for batch size 32
+[2025-11-03 14:51:21,244][INFO] Saved z5d scaler to runs/s1_phaseB_m3/phaseB/meta/stage1/z5d_scaler.pkl
+[2025-11-03 14:51:21,246][INFO] [Stage-1] Starting epoch 1/60
+[2025-11-03 14:51:21,248][INFO] [Stage-1][debug] z5d stats mean=0.070 std=0.998 min=-2.341 max=3.568
+[2025-11-03 14:51:21,266][INFO] [Stage-1][step=0] loss=8.4904 sup0_nll=4.2034 sup1_nll=4.2870 data_raw=4982.8901 mix_norm=71.7225 mix_raw=4471.9600 mix_w=0.000000 mix_w_norm=0.0000 mix_var=62.3509 phys=0.0000 degRMSE=89.744 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.2144 m3_gate_thresh=0.5000
+[2025-11-03 14:51:21,301][INFO] Saved best Stage-1 checkpoint to runs/s1_phaseB_m3/phaseB/best_m3.pth (degRMSE=90.4079)
+[2025-11-03 14:51:21,301][INFO] [Stage-1] Starting epoch 2/60
+[2025-11-03 14:51:21,343][INFO] Saved best Stage-1 checkpoint to runs/s1_phaseB_m3/phaseB/best_m3.pth (degRMSE=86.3058)
+[2025-11-03 14:51:21,344][INFO] [Stage-1] Starting epoch 3/60
+[2025-11-03 14:51:21,373][INFO] [Stage-1][step=10] loss=8.2448 sup0_nll=4.0898 sup1_nll=4.1550 data_raw=5089.1074 mix_norm=49.2248 mix_raw=4701.9966 mix_w=0.000000 mix_w_norm=0.0000 mix_var=95.5209 phys=0.0000 degRMSE=84.155 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.2449 m3_gate_thresh=0.5000
+[2025-11-03 14:51:21,388][INFO] [Stage-1] Starting epoch 4/60
+[2025-11-03 14:51:21,427][INFO] [Stage-1] Starting epoch 5/60
+[2025-11-03 14:51:21,470][INFO] Saved best Stage-1 checkpoint to runs/s1_phaseB_m3/phaseB/best_m3.pth (degRMSE=85.9442)
+[2025-11-03 14:51:21,470][INFO] [Stage-1] Starting epoch 6/60
+[2025-11-03 14:51:21,483][INFO] [Stage-1][step=20] loss=8.7806 sup0_nll=4.1584 sup1_nll=4.6222 data_raw=5047.2617 mix_norm=58.8890 mix_raw=4514.9868 mix_w=0.000000 mix_w_norm=0.0000 mix_var=76.6694 phys=0.0000 degRMSE=104.392 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.2441 m3_gate_thresh=0.5000
+[2025-11-03 14:51:21,514][INFO] [Stage-1] Starting epoch 7/60
+[2025-11-03 14:51:21,554][INFO] [Stage-1] Starting epoch 8/60
+[2025-11-03 14:51:21,584][INFO] [Stage-1][step=30] loss=8.3314 sup0_nll=3.8713 sup1_nll=4.4601 data_raw=5084.2808 mix_norm=60.6473 mix_raw=4662.3765 mix_w=0.000000 mix_w_norm=0.0000 mix_var=76.8770 phys=0.0000 degRMSE=97.001 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.1290 m3_gate_thresh=0.5000
+[2025-11-03 14:51:21,598][INFO] [Stage-1] Starting epoch 9/60
+[2025-11-03 14:51:21,637][INFO] [Stage-1] Starting epoch 10/60
+[2025-11-03 14:51:21,675][INFO] [Stage-1] Starting epoch 11/60
+[2025-11-03 14:51:21,687][INFO] [Stage-1][step=40] loss=7.9858 sup0_nll=4.0925 sup1_nll=3.8933 data_raw=5467.7266 mix_norm=84.5569 mix_raw=5089.4717 mix_w=0.000000 mix_w_norm=0.0000 mix_var=60.1899 phys=0.0000 degRMSE=80.610 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.2617 m3_gate_thresh=0.5000
+[2025-11-03 14:51:21,720][INFO] [Stage-1] Starting epoch 12/60
+[2025-11-03 14:51:21,758][INFO] [Stage-1] Starting epoch 13/60
+[2025-11-03 14:51:21,791][INFO] [Stage-1][step=50] loss=8.1980 sup0_nll=4.0323 sup1_nll=4.1656 data_raw=5005.3252 mix_norm=57.7792 mix_raw=4560.9937 mix_w=0.000000 mix_w_norm=0.0000 mix_var=78.9384 phys=0.0000 degRMSE=87.989 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.0946 m3_gate_thresh=0.5000
+[2025-11-03 14:51:21,803][INFO] [Stage-1] Starting epoch 14/60
+[2025-11-03 14:51:21,841][INFO] [Stage-1] Starting epoch 15/60
+[2025-11-03 14:51:21,881][INFO] [Stage-1] Starting epoch 16/60
+[2025-11-03 14:51:21,894][INFO] [Stage-1][step=60] loss=8.4261 sup0_nll=3.9431 sup1_nll=4.4829 data_raw=5002.0122 mix_norm=78.1321 mix_raw=4516.3018 mix_w=0.000000 mix_w_norm=0.0000 mix_var=57.8034 phys=0.0000 degRMSE=96.142 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.3127 m3_gate_thresh=0.5000
+[2025-11-03 14:51:21,925][INFO] [Stage-1] Starting epoch 17/60
+[2025-11-03 14:51:21,965][INFO] [Stage-1] Starting epoch 18/60
+[2025-11-03 14:51:21,999][INFO] [Stage-1][step=70] loss=8.0394 sup0_nll=4.0396 sup1_nll=3.9998 data_raw=5067.9692 mix_norm=64.9127 mix_raw=4583.5020 mix_w=0.000000 mix_w_norm=0.0000 mix_var=70.6103 phys=0.0000 degRMSE=81.703 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.0550 m3_gate_thresh=0.5000
+[2025-11-03 14:51:22,007][INFO] [Stage-1] Starting epoch 19/60
+[2025-11-03 14:51:22,049][INFO] [Stage-1] Starting epoch 20/60
+[2025-11-03 14:51:22,088][INFO] [Stage-1] Starting epoch 21/60
+[2025-11-03 14:51:22,102][INFO] [Stage-1][step=80] loss=8.7337 sup0_nll=4.3164 sup1_nll=4.4173 data_raw=5191.2158 mix_norm=71.5122 mix_raw=4729.9810 mix_w=0.000000 mix_w_norm=0.0000 mix_var=66.1423 phys=0.0000 degRMSE=94.187 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.1342 m3_gate_thresh=0.5000
+[2025-11-03 14:51:22,132][INFO] [Stage-1] Starting epoch 22/60
+[2025-11-03 14:51:22,171][INFO] [Stage-1] Starting epoch 23/60
+[2025-11-03 14:51:22,204][INFO] [Stage-1][step=90] loss=8.2244 sup0_nll=3.9930 sup1_nll=4.2313 data_raw=5128.3740 mix_norm=57.1741 mix_raw=4632.7734 mix_w=0.000000 mix_w_norm=0.0000 mix_var=81.0292 phys=0.0000 degRMSE=89.742 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.1624 m3_gate_thresh=0.5000
+[2025-11-03 14:51:22,215][INFO] [Stage-1] Starting epoch 24/60
+[2025-11-03 14:51:22,254][INFO] [Stage-1] Starting epoch 25/60
+[2025-11-03 14:51:22,294][INFO] [Stage-1] Starting epoch 26/60
+[2025-11-03 14:51:22,307][INFO] [Stage-1][step=100] loss=8.1280 sup0_nll=4.0771 sup1_nll=4.0509 data_raw=5127.4302 mix_norm=84.3197 mix_raw=4650.0483 mix_w=0.000000 mix_w_norm=0.0000 mix_var=55.1478 phys=0.0000 degRMSE=79.295 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.0832 m3_gate_thresh=0.5000
+[2025-11-03 14:51:22,338][INFO] [Stage-1] Starting epoch 27/60
+[2025-11-03 14:51:22,393][INFO] [Stage-1] Starting epoch 28/60
+[2025-11-03 14:51:22,428][INFO] [Stage-1][step=110] loss=8.6576 sup0_nll=4.2211 sup1_nll=4.4365 data_raw=5054.4961 mix_norm=50.2449 mix_raw=4391.3623 mix_w=0.000000 mix_w_norm=0.0000 mix_var=87.3992 phys=0.0000 degRMSE=89.853 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.3746 m3_gate_thresh=0.5000
+[2025-11-03 14:51:22,440][INFO] [Stage-1] Starting epoch 29/60
+[2025-11-03 14:51:22,482][INFO] [Stage-1] Starting epoch 30/60
+[2025-11-03 14:51:22,523][INFO] [Stage-1] Starting epoch 31/60
+[2025-11-03 14:51:22,536][INFO] [Stage-1][step=120] loss=8.7187 sup0_nll=4.3245 sup1_nll=4.3942 data_raw=5168.2241 mix_norm=44.0236 mix_raw=4645.4624 mix_w=0.000000 mix_w_norm=0.0000 mix_var=105.5221 phys=0.0000 degRMSE=100.026 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=-0.1334 m3_gate_thresh=0.5000
+[2025-11-03 14:51:22,568][INFO] [Stage-1] Starting epoch 32/60
+[2025-11-03 14:51:22,612][INFO] [Stage-1] Starting epoch 33/60
+[2025-11-03 14:51:22,650][INFO] [Stage-1][step=130] loss=8.2888 sup0_nll=4.0596 sup1_nll=4.2291 data_raw=5222.8125 mix_norm=54.3939 mix_raw=4582.4614 mix_w=0.000000 mix_w_norm=0.0000 mix_var=84.2458 phys=0.0000 degRMSE=93.975 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=-0.0473 m3_gate_thresh=0.5000
+[2025-11-03 14:51:22,663][INFO] [Stage-1] Starting epoch 34/60
+[2025-11-03 14:51:22,708][INFO] [Stage-1] Starting epoch 35/60
+[2025-11-03 14:51:22,754][INFO] [Stage-1] Starting epoch 36/60
+[2025-11-03 14:51:22,768][INFO] [Stage-1][step=140] loss=8.4688 sup0_nll=4.1179 sup1_nll=4.3510 data_raw=5240.3989 mix_norm=75.3977 mix_raw=4783.7891 mix_w=0.000000 mix_w_norm=0.0000 mix_var=63.4474 phys=0.0000 degRMSE=92.334 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.2984 m3_gate_thresh=0.5000
+[2025-11-03 14:51:22,800][INFO] [Stage-1] Starting epoch 37/60
+[2025-11-03 14:51:22,841][INFO] [Stage-1] Starting epoch 38/60
+[2025-11-03 14:51:22,877][INFO] [Stage-1][step=150] loss=8.4177 sup0_nll=4.2493 sup1_nll=4.1684 data_raw=5287.6729 mix_norm=54.7807 mix_raw=4786.2661 mix_w=0.000000 mix_w_norm=0.0000 mix_var=87.3714 phys=0.0000 degRMSE=92.804 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.0579 m3_gate_thresh=0.5000
+[2025-11-03 14:51:22,888][INFO] [Stage-1] Starting epoch 39/60
+[2025-11-03 14:51:22,928][INFO] [Stage-1] Starting epoch 40/60
+[2025-11-03 14:51:22,972][INFO] Saved best Stage-1 checkpoint to runs/s1_phaseB_m3/phaseB/best_m3.pth (degRMSE=85.8761)
+[2025-11-03 14:51:22,973][INFO] [Stage-1] Starting epoch 41/60
+[2025-11-03 14:51:22,987][INFO] [Stage-1][step=160] loss=8.2947 sup0_nll=4.1625 sup1_nll=4.1322 data_raw=5107.8809 mix_norm=77.3186 mix_raw=4645.6421 mix_w=0.000000 mix_w_norm=0.0000 mix_var=60.0844 phys=0.0000 degRMSE=85.731 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.1041 m3_gate_thresh=0.5000
+[2025-11-03 14:51:23,020][INFO] [Stage-1] Starting epoch 42/60
+[2025-11-03 14:51:23,061][INFO] [Stage-1] Starting epoch 43/60
+[2025-11-03 14:51:23,085][INFO] [Stage-1][step=170] loss=8.3015 sup0_nll=4.1020 sup1_nll=4.1995 data_raw=5112.8140 mix_norm=55.4197 mix_raw=4495.2295 mix_w=0.000000 mix_w_norm=0.0000 mix_var=81.1124 phys=0.0000 degRMSE=86.743 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.2254 m3_gate_thresh=0.5000
+[2025-11-03 14:51:23,106][INFO] [Stage-1] Starting epoch 44/60
+[2025-11-03 14:51:23,148][INFO] [Stage-1] Starting epoch 45/60
+[2025-11-03 14:51:23,190][INFO] [Stage-1] Starting epoch 46/60
+[2025-11-03 14:51:23,203][INFO] [Stage-1][step=180] loss=8.4996 sup0_nll=4.2038 sup1_nll=4.2957 data_raw=5259.0059 mix_norm=53.6373 mix_raw=4709.5938 mix_w=0.000000 mix_w_norm=0.0000 mix_var=87.8044 phys=0.0000 degRMSE=92.601 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=-0.0850 m3_gate_thresh=0.5000
+[2025-11-03 14:51:23,233][INFO] [Stage-1] Starting epoch 47/60
+[2025-11-03 14:51:23,273][INFO] [Stage-1] Starting epoch 48/60
+[2025-11-03 14:51:23,306][INFO] [Stage-1][step=190] loss=8.1327 sup0_nll=3.9475 sup1_nll=4.1852 data_raw=5412.5039 mix_norm=53.8979 mix_raw=4883.1880 mix_w=0.000000 mix_w_norm=0.0000 mix_var=90.6007 phys=0.0000 degRMSE=90.214 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=-0.0136 m3_gate_thresh=0.5000
+[2025-11-03 14:51:23,317][INFO] [Stage-1] Starting epoch 49/60
+[2025-11-03 14:51:23,356][INFO] [Stage-1] Starting epoch 50/60
+[2025-11-03 14:51:23,400][INFO] Saved best Stage-1 checkpoint to runs/s1_phaseB_m3/phaseB/best_m3.pth (degRMSE=85.2354)
+[2025-11-03 14:51:23,400][INFO] [Stage-1] Starting epoch 51/60
+[2025-11-03 14:51:23,414][INFO] [Stage-1][step=200] loss=7.6767 sup0_nll=3.8171 sup1_nll=3.8596 data_raw=5303.2871 mix_norm=58.1070 mix_raw=4849.5635 mix_w=0.000000 mix_w_norm=0.0000 mix_var=83.4592 phys=0.0000 degRMSE=78.386 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=-0.2038 m3_gate_thresh=0.5000
+[2025-11-03 14:51:23,443][INFO] [Stage-1] Starting epoch 52/60
+[2025-11-03 14:51:23,483][INFO] [Stage-1] Starting epoch 53/60
+[2025-11-03 14:51:23,525][INFO] [Stage-1][step=210] loss=8.3470 sup0_nll=4.2883 sup1_nll=4.0587 data_raw=5440.6333 mix_norm=60.1328 mix_raw=4873.0474 mix_w=0.000000 mix_w_norm=0.0000 mix_var=81.0380 phys=0.0000 degRMSE=84.135 m3_enabled=1 m3_gate_mean=0.0033 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=-0.0568 m3_gate_thresh=0.5000
+[2025-11-03 14:51:23,537][INFO] [Stage-1] Starting epoch 54/60
+[2025-11-03 14:51:23,578][INFO] [Stage-1] Starting epoch 55/60
+[2025-11-03 14:51:23,616][INFO] [Stage-1] Starting epoch 56/60
+[2025-11-03 14:51:23,632][INFO] [Stage-1][step=220] loss=8.2097 sup0_nll=4.0958 sup1_nll=4.1138 data_raw=5292.1313 mix_norm=63.0003 mix_raw=4803.6143 mix_w=0.000000 mix_w_norm=0.0000 mix_var=76.2474 phys=0.0000 degRMSE=82.792 m3_enabled=1 m3_gate_mean=0.0064 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0001 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.2570 m3_gate_thresh=0.5000
+[2025-11-03 14:51:23,663][INFO] [Stage-1] Starting epoch 57/60
+[2025-11-03 14:51:23,703][INFO] [Stage-1] Starting epoch 58/60
+[2025-11-03 14:51:23,736][INFO] [Stage-1][step=230] loss=8.3232 sup0_nll=4.1476 sup1_nll=4.1755 data_raw=5195.8467 mix_norm=68.7451 mix_raw=4698.5376 mix_w=0.000000 mix_w_norm=0.0000 mix_var=68.3472 phys=0.0000 degRMSE=93.861 m3_enabled=1 m3_gate_mean=0.0093 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0002 m3_delta_clip_rate=0.0000 m3_kappa_corr=-0.1851 m3_gate_thresh=0.5000
+[2025-11-03 14:51:23,748][INFO] [Stage-1] Starting epoch 59/60
+[2025-11-03 14:51:23,788][INFO] [Stage-1] Starting epoch 60/60
+[2025-11-03 15:35:57,359][INFO] Console log level set to INFO
+[2025-11-03 15:35:57,360][INFO] File logging enabled at runs/s1_phaseB_m3/train.log
+[2025-11-03 15:35:57,360][INFO] Starting Stage-1 training for 60 epochs
+[2025-11-03 15:35:58,166][INFO] Stage-1 trainer initialized on device: cpu
+[2025-11-03 15:35:58,167][WARNING] rss_da\data\raw_data\standardized_v2\stage1_rel.csv not found. Falling back to synthetic samples.
+[2025-11-03 15:35:58,168][INFO] Generated synthetic 1 dataset with 128 samples for batch size 32
+[2025-11-03 15:35:58,169][INFO] Saved z5d scaler to runs/s1_phaseB_m3/phaseB/meta/stage1/z5d_scaler.pkl
+[2025-11-03 15:35:58,171][INFO] [Stage-1] Starting epoch 1/60
+[2025-11-03 15:35:58,173][INFO] [Stage-1][debug] z5d stats mean=0.070 std=0.998 min=-2.341 max=3.568
+[2025-11-03 15:35:58,189][INFO] [Stage-1][step=0] loss=8.4904 sup0_nll=4.2034 sup1_nll=4.2870 data_raw=4982.8901 mix_norm=71.7225 mix_raw=4471.9600 mix_w=0.000000 mix_w_norm=0.0000 mix_var=62.3509 phys=0.0000 degRMSE=89.744 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.2144 m3_gate_thresh=0.5000
+[2025-11-03 15:35:58,226][INFO] Saved best Stage-1 checkpoint to runs/s1_phaseB_m3/phaseB/best_m3.pth (degRMSE=90.4079)
+[2025-11-03 15:35:58,226][INFO] [Stage-1] Starting epoch 2/60
+[2025-11-03 15:35:58,266][INFO] Saved best Stage-1 checkpoint to runs/s1_phaseB_m3/phaseB/best_m3.pth (degRMSE=86.3058)
+[2025-11-03 15:35:58,266][INFO] [Stage-1] Starting epoch 3/60
+[2025-11-03 15:35:58,297][INFO] [Stage-1][step=10] loss=8.2448 sup0_nll=4.0898 sup1_nll=4.1550 data_raw=5089.1074 mix_norm=49.2248 mix_raw=4701.9966 mix_w=0.000000 mix_w_norm=0.0000 mix_var=95.5209 phys=0.0000 degRMSE=84.155 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.2449 m3_gate_thresh=0.5000
+[2025-11-03 15:35:58,304][INFO] [Stage-1] Starting epoch 4/60
+[2025-11-03 15:35:58,344][INFO] [Stage-1] Starting epoch 5/60
+[2025-11-03 15:35:58,383][INFO] Saved best Stage-1 checkpoint to runs/s1_phaseB_m3/phaseB/best_m3.pth (degRMSE=85.9442)
+[2025-11-03 15:35:58,384][INFO] [Stage-1] Starting epoch 6/60
+[2025-11-03 15:35:58,397][INFO] [Stage-1][step=20] loss=8.7806 sup0_nll=4.1584 sup1_nll=4.6222 data_raw=5047.2617 mix_norm=58.8890 mix_raw=4514.9868 mix_w=0.000000 mix_w_norm=0.0000 mix_var=76.6694 phys=0.0000 degRMSE=104.392 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.2441 m3_gate_thresh=0.5000
+[2025-11-03 15:35:58,428][INFO] [Stage-1] Starting epoch 7/60
+[2025-11-03 15:35:58,469][INFO] [Stage-1] Starting epoch 8/60
+[2025-11-03 15:35:58,502][INFO] [Stage-1][step=30] loss=8.3314 sup0_nll=3.8713 sup1_nll=4.4601 data_raw=5084.2808 mix_norm=60.6473 mix_raw=4662.3765 mix_w=0.000000 mix_w_norm=0.0000 mix_var=76.8770 phys=0.0000 degRMSE=97.001 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.1290 m3_gate_thresh=0.5000
+[2025-11-03 15:35:58,513][INFO] [Stage-1] Starting epoch 9/60
+[2025-11-03 15:35:58,552][INFO] [Stage-1] Starting epoch 10/60
+[2025-11-03 15:35:58,592][INFO] [Stage-1] Starting epoch 11/60
+[2025-11-03 15:35:58,606][INFO] [Stage-1][step=40] loss=7.9858 sup0_nll=4.0925 sup1_nll=3.8933 data_raw=5467.7266 mix_norm=84.5569 mix_raw=5089.4717 mix_w=0.000000 mix_w_norm=0.0000 mix_var=60.1899 phys=0.0000 degRMSE=80.610 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.2617 m3_gate_thresh=0.5000
+[2025-11-03 15:35:58,634][INFO] [Stage-1] Starting epoch 12/60
+[2025-11-03 15:35:58,696][INFO] [Stage-1] Starting epoch 13/60
+[2025-11-03 15:35:58,727][INFO] [Stage-1][step=50] loss=8.1980 sup0_nll=4.0323 sup1_nll=4.1656 data_raw=5005.3252 mix_norm=57.7792 mix_raw=4560.9937 mix_w=0.000000 mix_w_norm=0.0000 mix_var=78.9384 phys=0.0000 degRMSE=87.989 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.0946 m3_gate_thresh=0.5000
+[2025-11-03 15:35:58,738][INFO] [Stage-1] Starting epoch 14/60
+[2025-11-03 15:35:58,777][INFO] [Stage-1] Starting epoch 15/60
+[2025-11-03 15:35:58,816][INFO] [Stage-1] Starting epoch 16/60
+[2025-11-03 15:35:58,828][INFO] [Stage-1][step=60] loss=8.4261 sup0_nll=3.9431 sup1_nll=4.4829 data_raw=5002.0122 mix_norm=78.1321 mix_raw=4516.3018 mix_w=0.000000 mix_w_norm=0.0000 mix_var=57.8034 phys=0.0000 degRMSE=96.142 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.3127 m3_gate_thresh=0.5000
+[2025-11-03 15:35:58,859][INFO] [Stage-1] Starting epoch 17/60
+[2025-11-03 15:35:58,898][INFO] [Stage-1] Starting epoch 18/60
+[2025-11-03 15:35:58,932][INFO] [Stage-1][step=70] loss=8.0394 sup0_nll=4.0396 sup1_nll=3.9998 data_raw=5067.9692 mix_norm=64.9127 mix_raw=4583.5020 mix_w=0.000000 mix_w_norm=0.0000 mix_var=70.6103 phys=0.0000 degRMSE=81.703 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.0550 m3_gate_thresh=0.5000
+[2025-11-03 15:35:58,943][INFO] [Stage-1] Starting epoch 19/60
+[2025-11-03 15:35:58,983][INFO] [Stage-1] Starting epoch 20/60
+[2025-11-03 15:35:59,022][INFO] [Stage-1] Starting epoch 21/60
+[2025-11-03 15:35:59,035][INFO] [Stage-1][step=80] loss=8.7337 sup0_nll=4.3164 sup1_nll=4.4173 data_raw=5191.2158 mix_norm=71.5122 mix_raw=4729.9810 mix_w=0.000000 mix_w_norm=0.0000 mix_var=66.1423 phys=0.0000 degRMSE=94.187 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.1342 m3_gate_thresh=0.5000
+[2025-11-03 15:35:59,068][INFO] [Stage-1] Starting epoch 22/60
+[2025-11-03 15:35:59,108][INFO] [Stage-1] Starting epoch 23/60
+[2025-11-03 15:35:59,140][INFO] [Stage-1][step=90] loss=8.2244 sup0_nll=3.9930 sup1_nll=4.2313 data_raw=5128.3740 mix_norm=57.1741 mix_raw=4632.7734 mix_w=0.000000 mix_w_norm=0.0000 mix_var=81.0292 phys=0.0000 degRMSE=89.742 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.1624 m3_gate_thresh=0.5000
+[2025-11-03 15:35:59,151][INFO] [Stage-1] Starting epoch 24/60
+[2025-11-03 15:35:59,189][INFO] [Stage-1] Starting epoch 25/60
+[2025-11-03 15:35:59,228][INFO] [Stage-1] Starting epoch 26/60
+[2025-11-03 15:35:59,241][INFO] [Stage-1][step=100] loss=8.1280 sup0_nll=4.0771 sup1_nll=4.0509 data_raw=5127.4302 mix_norm=84.3197 mix_raw=4650.0483 mix_w=0.000000 mix_w_norm=0.0000 mix_var=55.1478 phys=0.0000 degRMSE=79.295 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.0832 m3_gate_thresh=0.5000
+[2025-11-03 15:35:59,272][INFO] [Stage-1] Starting epoch 27/60
+[2025-11-03 15:35:59,312][INFO] [Stage-1] Starting epoch 28/60
+[2025-11-03 15:35:59,345][INFO] [Stage-1][step=110] loss=8.6576 sup0_nll=4.2211 sup1_nll=4.4365 data_raw=5054.4961 mix_norm=50.2449 mix_raw=4391.3623 mix_w=0.000000 mix_w_norm=0.0000 mix_var=87.3992 phys=0.0000 degRMSE=89.853 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.3746 m3_gate_thresh=0.5000
+[2025-11-03 15:35:59,356][INFO] [Stage-1] Starting epoch 29/60
+[2025-11-03 15:35:59,396][INFO] [Stage-1] Starting epoch 30/60
+[2025-11-03 15:35:59,437][INFO] [Stage-1] Starting epoch 31/60
+[2025-11-03 15:35:59,449][INFO] [Stage-1][step=120] loss=8.7187 sup0_nll=4.3245 sup1_nll=4.3942 data_raw=5168.2241 mix_norm=44.0236 mix_raw=4645.4624 mix_w=0.000000 mix_w_norm=0.0000 mix_var=105.5221 phys=0.0000 degRMSE=100.026 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=-0.1334 m3_gate_thresh=0.5000
+[2025-11-03 15:35:59,482][INFO] [Stage-1] Starting epoch 32/60
+[2025-11-03 15:35:59,521][INFO] [Stage-1] Starting epoch 33/60
+[2025-11-03 15:35:59,554][INFO] [Stage-1][step=130] loss=8.2888 sup0_nll=4.0596 sup1_nll=4.2291 data_raw=5222.8125 mix_norm=54.3939 mix_raw=4582.4614 mix_w=0.000000 mix_w_norm=0.0000 mix_var=84.2458 phys=0.0000 degRMSE=93.975 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=-0.0473 m3_gate_thresh=0.5000
+[2025-11-03 15:35:59,565][INFO] [Stage-1] Starting epoch 34/60
+[2025-11-03 15:35:59,606][INFO] [Stage-1] Starting epoch 35/60
+[2025-11-03 15:35:59,648][INFO] [Stage-1] Starting epoch 36/60
+[2025-11-03 15:35:59,662][INFO] [Stage-1][step=140] loss=8.4688 sup0_nll=4.1179 sup1_nll=4.3510 data_raw=5240.3989 mix_norm=75.3977 mix_raw=4783.7891 mix_w=0.000000 mix_w_norm=0.0000 mix_var=63.4474 phys=0.0000 degRMSE=92.334 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.2984 m3_gate_thresh=0.5000
+[2025-11-03 15:35:59,692][INFO] [Stage-1] Starting epoch 37/60
+[2025-11-03 15:35:59,733][INFO] [Stage-1] Starting epoch 38/60
+[2025-11-03 15:35:59,764][INFO] [Stage-1][step=150] loss=8.4177 sup0_nll=4.2493 sup1_nll=4.1684 data_raw=5287.6729 mix_norm=54.7807 mix_raw=4786.2661 mix_w=0.000000 mix_w_norm=0.0000 mix_var=87.3714 phys=0.0000 degRMSE=92.804 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.0579 m3_gate_thresh=0.5000
+[2025-11-03 15:35:59,775][INFO] [Stage-1] Starting epoch 39/60
+[2025-11-03 15:35:59,815][INFO] [Stage-1] Starting epoch 40/60
+[2025-11-03 15:35:59,858][INFO] Saved best Stage-1 checkpoint to runs/s1_phaseB_m3/phaseB/best_m3.pth (degRMSE=85.8761)
+[2025-11-03 15:35:59,858][INFO] [Stage-1] Starting epoch 41/60
+[2025-11-03 15:35:59,871][INFO] [Stage-1][step=160] loss=8.2947 sup0_nll=4.1625 sup1_nll=4.1322 data_raw=5107.8809 mix_norm=77.3186 mix_raw=4645.6421 mix_w=0.000000 mix_w_norm=0.0000 mix_var=60.0844 phys=0.0000 degRMSE=85.731 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.1041 m3_gate_thresh=0.5000
+[2025-11-03 15:35:59,901][INFO] [Stage-1] Starting epoch 42/60
+[2025-11-03 15:35:59,941][INFO] [Stage-1] Starting epoch 43/60
+[2025-11-03 15:35:59,974][INFO] [Stage-1][step=170] loss=8.3015 sup0_nll=4.1020 sup1_nll=4.1995 data_raw=5112.8140 mix_norm=55.4197 mix_raw=4495.2295 mix_w=0.000000 mix_w_norm=0.0000 mix_var=81.1124 phys=0.0000 degRMSE=86.743 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.2254 m3_gate_thresh=0.5000
+[2025-11-03 15:35:59,986][INFO] [Stage-1] Starting epoch 44/60
+[2025-11-03 15:36:00,032][INFO] [Stage-1] Starting epoch 45/60
+[2025-11-03 15:36:00,075][INFO] [Stage-1] Starting epoch 46/60
+[2025-11-03 15:36:00,088][INFO] [Stage-1][step=180] loss=8.4996 sup0_nll=4.2038 sup1_nll=4.2957 data_raw=5259.0059 mix_norm=53.6373 mix_raw=4709.5938 mix_w=0.000000 mix_w_norm=0.0000 mix_var=87.8044 phys=0.0000 degRMSE=92.601 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=-0.0850 m3_gate_thresh=0.5000
+[2025-11-03 15:36:00,119][INFO] [Stage-1] Starting epoch 47/60
+[2025-11-03 15:36:00,159][INFO] [Stage-1] Starting epoch 48/60
+[2025-11-03 15:36:00,191][INFO] [Stage-1][step=190] loss=8.1327 sup0_nll=3.9475 sup1_nll=4.1852 data_raw=5412.5039 mix_norm=53.8979 mix_raw=4883.1880 mix_w=0.000000 mix_w_norm=0.0000 mix_var=90.6007 phys=0.0000 degRMSE=90.214 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=-0.0136 m3_gate_thresh=0.5000
+[2025-11-03 15:36:00,202][INFO] [Stage-1] Starting epoch 49/60
+[2025-11-03 15:36:00,242][INFO] [Stage-1] Starting epoch 50/60
+[2025-11-03 15:36:00,285][INFO] Saved best Stage-1 checkpoint to runs/s1_phaseB_m3/phaseB/best_m3.pth (degRMSE=85.2354)
+[2025-11-03 15:36:00,286][INFO] [Stage-1] Starting epoch 51/60
+[2025-11-03 15:36:00,299][INFO] [Stage-1][step=200] loss=7.6767 sup0_nll=3.8171 sup1_nll=3.8596 data_raw=5303.2871 mix_norm=58.1070 mix_raw=4849.5635 mix_w=0.000000 mix_w_norm=0.0000 mix_var=83.4592 phys=0.0000 degRMSE=78.386 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=-0.2038 m3_gate_thresh=0.5000
+[2025-11-03 15:36:00,330][INFO] [Stage-1] Starting epoch 52/60
+[2025-11-03 15:36:00,370][INFO] [Stage-1] Starting epoch 53/60
+[2025-11-03 15:36:00,402][INFO] [Stage-1][step=210] loss=8.3470 sup0_nll=4.2883 sup1_nll=4.0587 data_raw=5440.6333 mix_norm=60.1328 mix_raw=4873.0474 mix_w=0.000000 mix_w_norm=0.0000 mix_var=81.0380 phys=0.0000 degRMSE=84.135 m3_enabled=1 m3_gate_mean=0.0033 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=-0.0568 m3_gate_thresh=0.5000
+[2025-11-03 15:36:00,414][INFO] [Stage-1] Starting epoch 54/60
+[2025-11-03 15:36:00,453][INFO] [Stage-1] Starting epoch 55/60
+[2025-11-03 15:36:00,491][INFO] [Stage-1] Starting epoch 56/60
+[2025-11-03 15:36:00,503][INFO] [Stage-1][step=220] loss=8.2097 sup0_nll=4.0958 sup1_nll=4.1138 data_raw=5292.1313 mix_norm=63.0003 mix_raw=4803.6143 mix_w=0.000000 mix_w_norm=0.0000 mix_var=76.2474 phys=0.0000 degRMSE=82.792 m3_enabled=1 m3_gate_mean=0.0064 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0001 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.2570 m3_gate_thresh=0.5000
+[2025-11-03 15:36:00,534][INFO] [Stage-1] Starting epoch 57/60
+[2025-11-03 15:36:00,572][INFO] [Stage-1] Starting epoch 58/60
+[2025-11-03 15:36:00,605][INFO] [Stage-1][step=230] loss=8.3232 sup0_nll=4.1476 sup1_nll=4.1755 data_raw=5195.8467 mix_norm=68.7451 mix_raw=4698.5376 mix_w=0.000000 mix_w_norm=0.0000 mix_var=68.3472 phys=0.0000 degRMSE=93.861 m3_enabled=1 m3_gate_mean=0.0093 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0002 m3_delta_clip_rate=0.0000 m3_kappa_corr=-0.1851 m3_gate_thresh=0.5000
+[2025-11-03 15:36:00,616][INFO] [Stage-1] Starting epoch 59/60
+[2025-11-03 15:36:00,656][INFO] [Stage-1] Starting epoch 60/60

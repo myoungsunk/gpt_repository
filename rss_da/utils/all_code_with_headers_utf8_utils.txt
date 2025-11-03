@@ -1,0 +1,173 @@
+﻿"""泥댄겕?ъ씤???좏떥."""
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Dict
+
+import torch
+
+
+def save_checkpoint(path: Path, modules: Dict[str, torch.nn.Module], step: int) -> None:
+    """紐⑤뱢 state_dict瑜???ν븳??"""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {f"{name}_state": module.state_dict() for name, module in modules.items()}
+    payload["step"] = step
+    torch.save(payload, path)
+
+
+def load_checkpoint(path: Path, modules: Dict[str, torch.nn.Module]) -> int:
+    """紐⑤뱢 state_dict瑜?濡쒕뱶?섍퀬 step 諛섑솚."""
+
+    payload = torch.load(path, map_location="cpu")
+    step = int(payload.get("step", 0))
+    for name, module in modules.items():
+        key = f"{name}_state"
+        if key in payload:
+            module.load_state_dict(payload[key])
+    return step
+
+
+__all__ = ["save_checkpoint", "load_checkpoint"]
+"""濡쒓퉭 ?좏떥."""
+from __future__ import annotations
+
+import csv
+from pathlib import Path
+from typing import Dict
+
+from torch.utils.tensorboard import SummaryWriter
+
+
+class Logger:
+    """TensorBoard? CSV瑜??숈떆??湲곕줉?쒕떎."""
+
+    def __init__(self, log_dir: Path) -> None:
+        self.log_dir = log_dir
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.writer = SummaryWriter(log_dir.as_posix())
+        self.csv_path = self.log_dir / "metrics.csv"
+        self._csv_file = self.csv_path.open("w", newline="")
+        self._csv_writer = csv.writer(self._csv_file)
+        self._csv_writer.writerow(["step", "metric", "value"])
+
+    def add_scalars(self, step: int, metrics: Dict[str, float]) -> None:
+        for key, value in metrics.items():
+            self.writer.add_scalar(key, value, step)
+            self._csv_writer.writerow([step, key, value])
+        self._csv_file.flush()
+
+    def close(self) -> None:
+        self.writer.flush()
+        self.writer.close()
+        self._csv_file.close()
+
+
+__all__ = ["Logger"]
+"""?됯?吏???좏떥."""
+from __future__ import annotations
+
+from typing import Dict
+
+import torch
+
+
+def circular_mean_error_deg(pred_mu: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """?먰삎 媛곷룄 ?ㅼ감(deg)."""
+
+    diff = torch.atan2(torch.sin(pred_mu - target), torch.cos(pred_mu - target))
+    return torch.rad2deg(diff.abs()).mean()
+
+
+def ece_placeholder(logits: torch.Tensor, labels: torch.Tensor, num_bins: int = 10) -> Dict[str, torch.Tensor]:
+    """ECE ?ㅼ펷?덊넠."""
+
+    confidences = torch.softmax(logits, dim=-1).max(dim=-1).values
+    predictions = logits.argmax(dim=-1)
+    accuracies = predictions.eq(labels)
+    bins = torch.linspace(0, 1, steps=num_bins + 1, device=logits.device)
+    total = logits.new_tensor(0.0)
+    ece = logits.new_tensor(0.0)
+    for i in range(num_bins):
+        mask = (confidences >= bins[i]) & (confidences < bins[i + 1])
+        count = mask.sum().float()
+        if count == 0:
+            continue
+        total = total + count
+        acc = accuracies[mask].float().mean()
+        conf = confidences[mask].mean()
+        ece = ece + count * (acc - conf).abs()
+    ece = ece / torch.clamp(total, min=1.0)
+    return {"ece": ece}
+
+
+def aurc_placeholder(confidences: torch.Tensor, errors: torch.Tensor) -> torch.Tensor:
+    """AURC ?ㅼ펷?덊넠."""
+
+    sorted_conf, indices = confidences.sort(descending=True)
+    sorted_errors = errors[indices]
+    cumulative_error = torch.cumsum(sorted_errors.float(), dim=0)
+    coverage = torch.arange(1, confidences.numel() + 1, device=confidences.device)
+    risk = cumulative_error / coverage
+    aurc = torch.trapz(risk, coverage / coverage[-1])
+    return aurc
+
+
+def dann_accuracy_placeholder(domain_logits: torch.Tensor, domain_labels: torch.Tensor) -> torch.Tensor:
+    """DANN domain classifier ?뺥솗??placeholder."""
+
+    preds = domain_logits.argmax(dim=-1)
+    return preds.eq(domain_labels).float().mean()
+
+
+__all__ = [
+    "circular_mean_error_deg",
+    "ece_placeholder",
+    "aurc_placeholder",
+    "dann_accuracy_placeholder",
+]
+"""?ы쁽??怨좎젙???꾪븳 ?쒕뱶 ?좏떥."""
+from __future__ import annotations
+
+import os
+import random
+
+import numpy as np
+import torch
+
+
+def set_seed(seed: int) -> None:
+    """紐⑤뱺 ?섏궗?쒖닔 ?앹꽦湲??쒕뱶瑜??ㅼ젙?쒕떎."""
+
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    torch.use_deterministic_algorithms(False)
+
+
+__all__ = ["set_seed"]
+"""怨듯넻 ?좏떥."""
+
+from .checkpoint import load_checkpoint, save_checkpoint
+from .log import Logger
+from .metrics import (
+    aurc_placeholder,
+    circular_mean_error_deg,
+    dann_accuracy_placeholder,
+    ece_placeholder,
+)
+from .seed import set_seed
+
+__all__ = [
+    "set_seed",
+    "Logger",
+    "save_checkpoint",
+    "load_checkpoint",
+    "circular_mean_error_deg",
+    "ece_placeholder",
+    "aurc_placeholder",
+    "dann_accuracy_placeholder",
+]

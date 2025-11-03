@@ -1,0 +1,393 @@
+﻿"""怨듭슜 RSS DoA Dataset."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence, Union
+
+import numpy as np
+import pandas as pd
+import torch
+from torch.utils.data import Dataset
+
+ArrayLike = Sequence[float]
+PathLike = Union[str, Path]
+
+
+@dataclass
+class Sample:
+    """?곗씠???섑뵆 ?ㅽ궎留?"""
+
+    z5d: ArrayLike  # 湲몄씠 5, ?곷? dB 湲곕컲
+    c_meas: ArrayLike  # 湲몄씠 2, ?곷? dB
+    theta_gt: ArrayLike  # 湲몄씠 2, rad
+    four_rss: Optional[ArrayLike] = None  # 湲몄씠 4, Stage-1?먯꽌留??ъ슜 (?곷? dB)
+    c_meas_rel: Optional[ArrayLike] = None  # 湲몄씠 2, ?곷? dB(以묐났 蹂닿???
+    c_meas_abs: Optional[ArrayLike] = None  # 湲몄씠 2, ?덈? dBm (?덈떎硫?
+    z5d_named: Optional[Dict[str, float]] = None  # 而щ읆蹂??뱀꽦 ???
+    mask_4rss_is_gt: float = 0.0  # {0,1}
+
+
+class RssDoADataset(Dataset):
+    """Stage-1/2.5 怨듭슜 Dataset."""
+
+    def __init__(
+        self,
+        samples: List[Sample],
+        stage: str = "1",
+        modality_dropout_p: float = 0.0,
+        training: bool = True,
+        rng: Optional[np.random.RandomState] = None,
+    ) -> None:
+        self.samples = samples
+        self.stage = stage
+        self.modality_dropout_p = modality_dropout_p
+        self.training = training
+        self.rng = rng or np.random.RandomState(0)
+        self._z5d_mean: Optional[np.ndarray] = None
+        self._z5d_std: Optional[np.ndarray] = None
+        if stage not in {"1", "2.5"}:
+            raise ValueError(f"Unsupported stage: {stage}")
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        sample = self.samples[idx]
+        z5d = np.asarray(sample.z5d, dtype=np.float32)  # (5,), float32
+        c_meas = np.asarray(sample.c_meas, dtype=np.float32)  # (2,), float32 (?곷? dB)
+        theta_gt = np.asarray(sample.theta_gt, dtype=np.float32)  # (2,), float32
+        mask = float(sample.mask_4rss_is_gt)
+        four_rss = None if sample.four_rss is None else np.asarray(sample.four_rss, dtype=np.float32)
+        c_meas_abs = None if sample.c_meas_abs is None else np.asarray(sample.c_meas_abs, dtype=np.float32)
+        z5d_named = sample.z5d_named
+
+        if self.training and self.modality_dropout_p > 0.0:
+            if self.rng.rand() < self.modality_dropout_p:
+                # z5d ?쇰? ?붿냼 留덉뒪??
+                dropout_mask = self.rng.rand(*z5d.shape) < 0.5
+                z5d = z5d.copy()
+                z5d[dropout_mask] = 0.0
+            if four_rss is not None and self.rng.rand() < self.modality_dropout_p:
+                four_rss = np.full((4,), -120.0, dtype=np.float32)
+                mask = 0.0
+
+        if self._z5d_mean is not None and self._z5d_std is not None:
+            z5d = (z5d - self._z5d_mean) / self._z5d_std
+
+        result: Dict[str, Any] = {
+            "z5d": torch.from_numpy(z5d),  # torch.FloatTensor[B=?,5]
+            "c_meas": torch.from_numpy(c_meas),  # torch.FloatTensor[2]
+            "theta_gt": torch.from_numpy(theta_gt),  # torch.FloatTensor[2]
+            "mask_4rss_is_gt": torch.tensor([mask], dtype=torch.float32),  # torch.FloatTensor[1]
+        }
+        if sample.c_meas_rel is not None:
+            c_meas_rel = np.asarray(sample.c_meas_rel, dtype=np.float32)
+            result["c_meas_rel"] = torch.from_numpy(c_meas_rel)  # torch.FloatTensor[2]
+        else:
+            result["c_meas_rel"] = torch.from_numpy(c_meas)
+        if c_meas_abs is not None:
+            result["c_meas_abs"] = torch.from_numpy(c_meas_abs)  # torch.FloatTensor[2]
+        if four_rss is not None:
+            result["four_rss"] = torch.from_numpy(four_rss)  # torch.FloatTensor[4]
+        else:
+            result["four_rss"] = torch.empty(0, dtype=torch.float32)  # torch.FloatTensor[0]
+        if z5d_named is not None:
+            result["z5d_named"] = {
+                key: torch.tensor(float(value), dtype=torch.float32)
+                for key, value in z5d_named.items()
+            }
+        return result
+
+    def set_standardization(self, mean: np.ndarray, std: np.ndarray) -> None:
+        """z5d ?쒖????뚮씪誘명꽣 ?ㅼ젙."""
+
+        std_safe = np.where(std < 1e-6, 1.0, std).astype(np.float32)
+        self._z5d_mean = mean.astype(np.float32)
+        self._z5d_std = std_safe
+
+
+def collate_samples(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
+    """諛곗튂 ?⑥쐞濡??먯꽌瑜??ㅽ깮?쒕떎."""
+
+    z5d = torch.stack([item["z5d"] for item in batch], dim=0)  # torch.FloatTensor[B,5]
+    c_meas = torch.stack([item["c_meas"] for item in batch], dim=0)  # torch.FloatTensor[B,2]
+    theta_gt = torch.stack([item["theta_gt"] for item in batch], dim=0)  # torch.FloatTensor[B,2]
+    mask = torch.stack([item["mask_4rss_is_gt"] for item in batch], dim=0)  # torch.FloatTensor[B,1]
+    four_rss_list = [item["four_rss"] for item in batch]
+    if all(tensor.numel() == 0 for tensor in four_rss_list):
+        four_rss = torch.empty((z5d.shape[0], 0), dtype=torch.float32)  # torch.FloatTensor[B,0]
+    else:
+        four_rss = torch.stack([
+            tensor if tensor.numel() > 0 else torch.full((4,), -120.0, dtype=torch.float32)
+            for tensor in four_rss_list
+        ], dim=0)  # torch.FloatTensor[B,4]
+    batch_out: Dict[str, torch.Tensor] = {
+        "z5d": z5d,
+        "c_meas": c_meas,
+        "theta_gt": theta_gt,
+        "four_rss": four_rss,
+        "mask_4rss_is_gt": mask,
+    }
+    if "c_meas_rel" in batch[0]:
+        c_meas_rel = torch.stack([item["c_meas_rel"] for item in batch], dim=0)  # torch.FloatTensor[B,2]
+        batch_out["c_meas_rel"] = c_meas_rel
+    else:
+        batch_out["c_meas_rel"] = torch.empty((z5d.shape[0], 0), dtype=torch.float32)
+    if "c_meas_abs" in batch[0]:
+        c_meas_abs = torch.stack([item["c_meas_abs"] for item in batch], dim=0)  # torch.FloatTensor[B,2]
+        batch_out["c_meas_abs"] = c_meas_abs
+    if "z5d_named" in batch[0]:
+        keys = batch[0]["z5d_named"].keys()
+        batch_out["z5d_named"] = {
+            key: torch.stack([item["z5d_named"][key] for item in batch], dim=0)
+            for key in keys
+        }
+    return batch_out
+
+
+__all__ = ["Sample", "RssDoADataset", "collate_samples"]
+
+
+def load_standardized_csv(
+    path: PathLike,
+    stage: str,
+    prefer_absolute: bool = True,
+) -> List[Sample]:
+    """prepare_datasets_v2.py 寃곌낵 CSV瑜?Sample 由ъ뒪?몃줈 蹂?섑븳??"""
+
+    df = pd.read_csv(path)
+    stage = str(stage)
+    if stage not in {"1", "2.5"}:
+        raise ValueError(f"Unsupported stage: {stage}")
+
+    samples: List[Sample] = []
+    rss_cols = [
+        "rss_a_p1_rel_db",
+        "rss_b_p1_rel_db",
+        "rss_a_p2_rel_db",
+        "rss_b_p2_rel_db",
+    ]
+
+    for _, row in df.iterrows():
+        c1_rel = float(row["c1_rel_db"])
+        c2_rel = float(row["c2_rel_db"])
+        delta_rel = float(row["delta_rel_db"])
+        sum_rel = float(row["sum_rel_db"])
+        log_ratio = float(row["log_ratio"])
+        has_abs = (
+            prefer_absolute
+            and pd.notna(row.get("c1_dbm"))
+            and pd.notna(row.get("c2_dbm"))
+        )
+        c_meas_abs: Optional[List[float]] = None
+        if has_abs:
+            c_meas_abs = [float(row["c1_dbm"]), float(row["c2_dbm"])]
+        z5d_values = [c1_rel, c2_rel, delta_rel, sum_rel, log_ratio]
+        z5d_named = {
+            "c1_rel_db": c1_rel,
+            "c2_rel_db": c2_rel,
+            "delta_rel_db": delta_rel,
+            "sum_rel_db": sum_rel,
+            "log_ratio": log_ratio,
+        }
+
+        mask = float(row.get("mask_4rss_is_gt", 0.0))
+        theta = [float(row["theta1_rad"]), float(row["theta2_rad"])]
+
+        four_rss_values: Optional[List[float]]
+        if stage == "1":
+            rss_raw = [row.get(col, np.nan) for col in rss_cols]
+            if all(pd.isna(value) for value in rss_raw):
+                four_rss_values = None
+            else:
+                four_array = np.asarray(rss_raw, dtype=np.float32)
+                four_rss_values = four_array.tolist()
+        else:
+            four_rss_values = None
+
+        samples.append(
+            Sample(
+                z5d=z5d_values,
+                c_meas=[c1_rel, c2_rel],
+                c_meas_rel=[c1_rel, c2_rel],
+                c_meas_abs=c_meas_abs,
+                theta_gt=theta,
+                four_rss=four_rss_values,
+                z5d_named=z5d_named,
+                mask_4rss_is_gt=mask,
+            )
+        )
+
+    return samples
+
+
+__all__.append("load_standardized_csv")
+"""?⑹꽦 RSS ?곗씠???앹꽦湲?"""
+from __future__ import annotations
+
+import argparse
+import json
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, Tuple
+
+import numpy as np
+
+from .dataset import Sample
+
+
+@dataclass
+class SynthConfig:
+    num_samples: int = 256
+    tx_power_dbm: float = 0.0
+    pathloss_exponent: float = 2.0
+    reference_distance_m: float = 1.0
+    reference_loss_db: float = 40.0
+    noise_std_db: float = 2.0
+    antenna_gain_main_db: float = 3.0
+    antenna_gain_side_db: float = -3.0
+
+
+def _rad_to_deg(theta_rad: np.ndarray) -> np.ndarray:
+    return np.rad2deg(theta_rad)
+
+
+def _ldpl_loss(distance_m: np.ndarray, config: SynthConfig) -> np.ndarray:
+    with np.errstate(divide="ignore"):
+        loss = config.reference_loss_db + 10 * config.pathloss_exponent * np.log10(
+            np.maximum(distance_m / config.reference_distance_m, 1e-3)
+        )
+    return loss
+
+
+def _antenna_pattern(theta_rad: np.ndarray, config: SynthConfig) -> Tuple[np.ndarray, np.ndarray]:
+    theta_deg = _rad_to_deg(theta_rad)
+    main_gain = config.antenna_gain_main_db - 0.1 * (theta_deg**2) / 90.0
+    side_gain = np.full_like(main_gain, config.antenna_gain_side_db)
+    return main_gain, side_gain
+
+
+def generate_synth_samples(config: SynthConfig, *, seed: int = 0) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
+    rng = np.random.default_rng(seed)
+    theta = rng.uniform(-np.pi, np.pi, size=(config.num_samples, 2))  # rad
+    distances = rng.uniform(1.0, 50.0, size=(config.num_samples, 2))  # m
+
+    main_gain, side_gain = _antenna_pattern(theta[:, 0], config)
+    main_gain2, side_gain2 = _antenna_pattern(theta[:, 1], config)
+
+    pathloss1 = _ldpl_loss(distances[:, 0], config)
+    pathloss2 = _ldpl_loss(distances[:, 1], config)
+
+    rss1 = config.tx_power_dbm + main_gain - pathloss1
+    rss2 = config.tx_power_dbm + main_gain2 - pathloss2
+    rss3 = config.tx_power_dbm + side_gain - pathloss1
+    rss4 = config.tx_power_dbm + side_gain2 - pathloss2
+
+    noise = rng.normal(0.0, config.noise_std_db, size=(config.num_samples, 4))
+    four_rss = np.stack([rss1, rss2, rss3, rss4], axis=-1) + noise
+    four_rss = four_rss.astype(np.float32)
+
+    c_meas = np.stack([
+        10 * np.log10(np.sum(10 ** (four_rss[:, :2] / 10), axis=-1)),
+        10 * np.log10(np.sum(10 ** (four_rss[:, 2:] / 10), axis=-1)),
+    ], axis=-1).astype(np.float32)
+
+    delta = rss1 - rss2
+    sum_db = rss1 + rss2
+    log_ratio = np.log1p(np.abs(delta))
+    z5d = np.stack([
+        (rss1 + rss3) / 2,
+        (rss2 + rss4) / 2,
+        delta,
+        sum_db,
+        log_ratio,
+    ], axis=-1).astype(np.float32)
+
+    data = {
+        "z5d": z5d,
+        "c_meas": c_meas,
+        "theta_gt": theta.astype(np.float32),
+        "four_rss": four_rss,
+    }
+    return theta, data
+
+
+def build_samples(data: Dict[str, np.ndarray]) -> Tuple[Sample, ...]:
+    samples = []
+    num = data["z5d"].shape[0]
+    for i in range(num):
+        samples.append(
+            Sample(
+                z5d=data["z5d"][i].tolist(),
+                c_meas=data["c_meas"][i].tolist(),
+                theta_gt=data["theta_gt"][i].tolist(),
+                four_rss=data["four_rss"][i].tolist(),
+                mask_4rss_is_gt=1.0,
+            )
+        )
+    return tuple(samples)
+
+
+def save_dataset(path: Path, data: Dict[str, np.ndarray]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {key: array.tolist() for key, array in data.items()}
+    path.write_text(json.dumps(payload))
+
+
+def load_dataset(path: Path) -> Dict[str, np.ndarray]:
+    payload = json.loads(path.read_text())
+    return {key: np.asarray(value, dtype=np.float32) for key, value in payload.items()}
+
+
+def _build_argparser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Generate synthetic RSS-DoA samples.")
+    parser.add_argument("--out", type=Path, required=True, help="??ν븷 JSON 寃쎈줈")
+    parser.add_argument("--num-samples", type=int, default=256, help="?앹꽦???섑뵆 ??)
+    parser.add_argument("--seed", type=int, default=0, help="?쒖닔 ?쒕뱶")
+    parser.add_argument("--tx-power", type=float, default=0.0, help="?≪떊 ?꾨젰(dBm)")
+    parser.add_argument("--pathloss-exp", type=float, default=2.0, help="寃쎈줈?먯떎 吏??)
+    parser.add_argument("--noise-std", type=float, default=2.0, help="RSS ?몄씠利??쒖??몄감(dB)")
+    return parser
+
+
+def main() -> None:
+    parser = _build_argparser()
+    args = parser.parse_args()
+    config = SynthConfig(
+        num_samples=args.num_samples,
+        tx_power_dbm=args.tx_power,
+        pathloss_exponent=args.pathloss_exp,
+        noise_std_db=args.noise_std,
+    )
+    _, data = generate_synth_samples(config, seed=args.seed)
+    save_dataset(args.out, data)
+
+
+if __name__ == "__main__":
+    main()
+
+
+__all__ = [
+    "SynthConfig",
+    "generate_synth_samples",
+    "build_samples",
+    "save_dataset",
+    "load_dataset",
+]
+"""?곗씠???쒕툕?⑦궎吏."""
+
+from .dataset import RssDoADataset, Sample, collate_samples, load_standardized_csv
+from .synth_generator import SynthConfig, build_samples, generate_synth_samples, load_dataset, save_dataset
+
+__all__ = [
+    "Sample",
+    "RssDoADataset",
+    "collate_samples",
+    "load_standardized_csv",
+    "SynthConfig",
+    "generate_synth_samples",
+    "build_samples",
+    "save_dataset",
+    "load_dataset",
+]
