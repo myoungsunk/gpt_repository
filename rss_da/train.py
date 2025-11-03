@@ -197,15 +197,14 @@ def _stage1_loop(
                 }
                 if outputs.decoder_recon_mae_4rss is not None:
                     metrics["decoder_recon_mae_4rss"] = outputs.decoder_recon_mae_4rss
-<<<<<<< Updated upstream
                 if outputs.decoder_recon_mae_4rss_p90 is not None:
                     metrics["decoder_recon_mae_4rss_p90"] = outputs.decoder_recon_mae_4rss_p90
                 if outputs.phi_gate_keep_ratio is not None:
                     metrics["phi_gate_keep_ratio"] = outputs.phi_gate_keep_ratio
                 if outputs.recon_mae_theta_corr is not None:
                     metrics["recon_mae_theta_corr"] = outputs.recon_mae_theta_corr
-=======
->>>>>>> Stashed changes
+                if outputs.forward_consistency is not None:
+                    metrics["forward_consistency"] = outputs.forward_consistency
                 if outputs.m3_enabled is not None:
                     metrics.update(
                         {
@@ -258,7 +257,6 @@ def _stage1_loop(
                     if outputs.decoder_recon_mae_4rss is not None:
                         base_msg += " decoder_mae4=%.4f"
                         args_list.append(metrics["decoder_recon_mae_4rss"])
-<<<<<<< Updated upstream
                     if outputs.decoder_recon_mae_4rss_p90 is not None:
                         base_msg += " decoder_mae4_p90=%.4f"
                         args_list.append(metrics["decoder_recon_mae_4rss_p90"])
@@ -268,8 +266,9 @@ def _stage1_loop(
                     if outputs.recon_mae_theta_corr is not None:
                         base_msg += " mae_theta_corr=%.4f"
                         args_list.append(metrics["recon_mae_theta_corr"])
-=======
->>>>>>> Stashed changes
+                    if outputs.forward_consistency is not None:
+                        base_msg += " fwd_cons=%.4f"
+                        args_list.append(metrics["forward_consistency"])
                     if outputs.m3_enabled is not None:
                         base_msg += (
                             " m3_enabled=%.0f gate_mean=%.4f keep=%.4f gate_p10=%.4f gate_p90=%.4f "
@@ -378,6 +377,8 @@ def _stage25_loop(
                     metrics["phi_gate_keep_ratio"] = outputs.phi_gate_keep_ratio
                 if outputs.recon_mae_theta_corr is not None:
                     metrics["recon_mae_theta_corr"] = outputs.recon_mae_theta_corr
+                if outputs.forward_consistency is not None:
+                    metrics["forward_consistency"] = outputs.forward_consistency
                 if outputs.m3_enabled is not None:
                     metrics.update(
                         {
@@ -427,6 +428,9 @@ def _stage25_loop(
                     if outputs.recon_mae_theta_corr is not None:
                         base_msg += " mae_theta_corr=%.4f"
                         args_list.append(metrics.get("recon_mae_theta_corr", 0.0))
+                    if outputs.forward_consistency is not None:
+                        base_msg += " fwd_cons=%.4f"
+                        args_list.append(metrics.get("forward_consistency", 0.0))
                     if outputs.m3_enabled is not None:
                         base_msg += (
                             " m3_enabled=%.0f m3_gate_mean=%.4f m3_keep_ratio=%.4f "

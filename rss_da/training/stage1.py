@@ -9,6 +9,7 @@ from typing import Dict, Optional
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 
 from rss_da.config import Config
@@ -19,6 +20,7 @@ from rss_da.models.encoders import Adapter, E4, E5, Fuse
 from rss_da.models.m2 import DoAPredictor
 from rss_da.models.m3 import ResidualCalibrator
 from rss_da.utils.metrics import circular_mean_error_deg
+from rss_da.utils.phi_gate import compute_phi_gate
 
 @dataclass
 class Stage1Outputs:
@@ -58,11 +60,11 @@ class Stage1Outputs:
     m3_err_delta_mean_deg: Optional[float] = None
     phi_quality_improve_corr: Optional[float] = None
     decoder_recon_mae_4rss: Optional[float] = None
+    decoder_recon_mae_4rss_p90: Optional[float] = None
+    phi_gate_keep_ratio: Optional[float] = None
+    recon_mae_theta_corr: Optional[float] = None
+    forward_consistency: Optional[float] = None
     grad_norm_m3: Optional[float] = None
-<<<<<<< Updated upstream
-=======
-
->>>>>>> Stashed changes
 
 def _ensure_two_dim(tensor: torch.Tensor) -> torch.Tensor:
     """혼합 모델 대응."""
@@ -338,22 +340,47 @@ class Stage1Trainer:
         m3_stats: Optional[Dict[str, Optional[float]]] = None
         mu_eval = mu0
         decoder_recon_mae_4rss: Optional[float] = None
+        decoder_recon_mae_4rss_p90: Optional[float] = None
         decoder_mae_samples: Optional[torch.Tensor] = None
+        phi_gate_keep_ratio: Optional[float] = None
+        forward_consistency: Optional[float] = None
+        recon_mae_theta_corr: Optional[float] = None
         if enable_pass1:
             h5 = self.e5(z5d)  # torch.FloatTensor[B,H]
             r4_hat = self.decoder(h5.detach(), mu0)  # torch.FloatTensor[B,4]
             h4_hat = self.e4(r4_hat.detach())  # torch.FloatTensor[B,H]
-            mask = torch.zeros(z5d.size(0), 1, device=self.device)
-            h = self.fuse(h5, h4_hat, mask)
-            phi = self.adapter(h).detach()
+            batch_size = z5d.size(0)
+            ones_mask = torch.ones(batch_size, 1, device=self.device, dtype=h5.dtype)
+            r4_gt = four_rss if four_rss.numel() == batch_size * 4 else None
+            phi_gate = torch.ones(batch_size, 1, device=self.device, dtype=h5.dtype)
+            if r4_gt is not None:
+                decoder_mae_samples = torch.abs(r4_hat.detach() - r4_gt.detach()).mean(dim=-1)
+                decoder_recon_mae_4rss = decoder_mae_samples.mean().item()
+                decoder_recon_mae_4rss_p90 = torch.quantile(decoder_mae_samples, 0.90).item()
+                gate_flat, phi_gate_keep_ratio, _ = compute_phi_gate(
+                    decoder_mae_samples,
+                    enabled=self.cfg.train.phi_gate_enabled,
+                    threshold=self.cfg.train.phi_gate_threshold,
+                    quantile=self.cfg.train.phi_gate_quantile,
+                    min_keep=self.cfg.train.phi_gate_min_keep,
+                )
+                phi_gate = gate_flat.unsqueeze(-1).to(dtype=h5.dtype)
+            elif self.cfg.train.phi_gate_enabled:
+                phi_gate_keep_ratio = 1.0
+            h_pass0 = self.fuse(h5, h4_hat, ones_mask)
+            phi_pass0 = self.adapter(h_pass0).detach()
+            h = self.fuse(h5, h4_hat, phi_gate)
+            phi = (self.adapter(h) * phi_gate).detach()
             mu1, kappa1, _ = self.m2(z5d, phi)
             mu1 = _ensure_two_dim(mu1)
             kappa1 = _ensure_two_dim(kappa1)
             mu_eval = mu1
-            r4_gt = four_rss if four_rss.numel() == z5d.size(0) * 4 else None
+            phi_gt = None
             if r4_gt is not None:
-                decoder_mae_samples = torch.abs(r4_hat.detach() - r4_gt.detach()).mean(dim=-1)
-                decoder_recon_mae_4rss = decoder_mae_samples.mean().item()
+                h4_gt = self.e4(r4_gt.detach())
+                h_gt = self.fuse(h5, h4_gt, ones_mask)
+                phi_gt = self.adapter(h_gt).detach()
+                forward_consistency = F.cosine_similarity(phi_pass0, phi_gt, dim=-1).mean().item()
             if self.m3_enabled and self.m3 is not None:
                 c_feat = c_meas_rel if c_meas_rel is not None else c_meas
                 features = self._assemble_m3_features(z5d, phi, c_feat, four_rss, mu1, kappa1)
@@ -455,18 +482,6 @@ class Stage1Trainer:
                         "err_delta_mean_deg": err_delta_mean,
                         "phi_quality_corr": phi_corr,
                     }
-<<<<<<< Updated upstream
-        loss_sup1 = von_mises_nll(mu1, kappa1, theta_gt)
-        r4_gt = four_rss if four_rss.numel() == z5d.size(0) * 4 else None
-        recon = recon_loss(
-            r4_hat,
-            r4_gt_dbm=r4_gt,
-            c_meas_dbm=c_meas,
-            c_meas_rel_db=c_meas_rel,
-            input_scale=self.cfg.data.input_scale,
-            mix_variance_floor=self.mix_variance_floor,
-        )
-=======
             loss_sup1 = von_mises_nll(mu1, kappa1, theta_gt)
             r4_gt = four_rss if four_rss.numel() == z5d.size(0) * 4 else None
             recon = recon_loss(
@@ -477,7 +492,6 @@ class Stage1Trainer:
                 input_scale=self.cfg.data.input_scale,
                 mix_variance_floor=self.mix_variance_floor,
             )
->>>>>>> Stashed changes
         w_sup, _, w_mix, _, w_phys = self.cfg.train.loss_weights
         mix_scale = self._mix_weight()
         mix_weight = min(w_mix * mix_scale, self.mix_weight_cap)
@@ -516,6 +530,10 @@ class Stage1Trainer:
         self.optimizer.step()
         self.global_step += 1
         deg_rmse = circular_mean_error_deg(mu_eval.detach(), theta_gt.detach()).item()
+        if decoder_mae_samples is not None:
+            err = torch.atan2(torch.sin(mu_eval.detach() - theta_gt.detach()), torch.cos(mu_eval.detach() - theta_gt.detach()))
+            err_deg = torch.rad2deg(err.abs()).mean(dim=-1)
+            recon_mae_theta_corr = self._spearman_corr(decoder_mae_samples.detach(), err_deg.detach())
         if m3_stats is None and self.m3_enabled:
             m3_stats = {
                 "enabled": 1.0,
@@ -574,6 +592,10 @@ class Stage1Trainer:
             m3_err_delta_mean_deg=m3_stats["err_delta_mean_deg"] if m3_stats is not None else None,
             phi_quality_improve_corr=m3_stats["phi_quality_corr"] if m3_stats is not None else None,
             decoder_recon_mae_4rss=decoder_recon_mae_4rss,
+            decoder_recon_mae_4rss_p90=decoder_recon_mae_4rss_p90,
+            phi_gate_keep_ratio=phi_gate_keep_ratio,
+            recon_mae_theta_corr=recon_mae_theta_corr,
+            forward_consistency=forward_consistency,
             grad_norm_m3=grad_norm_m3,
         )
         return result
