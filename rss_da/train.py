@@ -209,6 +209,7 @@ def _stage1_loop(
                             "m3_kappa_corr_spearman": outputs.m3_kappa_corr_spearman or 0.0,
                             "m3_residual_penalty": outputs.m3_residual_penalty or 0.0,
                             "m3_gate_entropy": outputs.m3_gate_entropy or 0.0,
+                            "m3_gate_threshold": outputs.m3_gate_threshold or 0.0,
                         }
                     )
                 if global_step % cfg.train.log_interval == 0:
@@ -235,7 +236,8 @@ def _stage1_loop(
                     if outputs.m3_enabled is not None:
                         base_msg += (
                             " m3_enabled=%.0f m3_gate_mean=%.4f m3_keep_ratio=%.4f "
-                            "m3_resid_abs_mean_deg=%.4f m3_delta_clip_rate=%.4f m3_kappa_corr=%.4f"
+                            "m3_resid_abs_mean_deg=%.4f m3_delta_clip_rate=%.4f m3_kappa_corr=%.4f "
+                            "m3_gate_thresh=%.4f"
                         )
                         args_list.extend(
                             [
@@ -245,6 +247,7 @@ def _stage1_loop(
                                 metrics["m3_resid_abs_mean_deg"],
                                 metrics["m3_delta_clip_rate"],
                                 metrics["m3_kappa_corr_spearman"],
+                                metrics["m3_gate_threshold"],
                             ]
                         )
                     logging.info(base_msg, *args_list)
@@ -326,6 +329,7 @@ def _stage25_loop(
                             "m3_kappa_corr_spearman": outputs.m3_kappa_corr_spearman or 0.0,
                             "m3_residual_penalty": outputs.m3_residual_penalty or 0.0,
                             "m3_gate_entropy": outputs.m3_gate_entropy or 0.0,
+                            "m3_gate_threshold": outputs.m3_gate_threshold or 0.0,
                         }
                     )
                 if global_step % cfg.train.log_interval == 0:
@@ -351,7 +355,8 @@ def _stage25_loop(
                     if outputs.m3_enabled is not None:
                         base_msg += (
                             " m3_enabled=%.0f m3_gate_mean=%.4f m3_keep_ratio=%.4f "
-                            "m3_resid_abs_mean_deg=%.4f m3_delta_clip_rate=%.4f m3_kappa_corr=%.4f"
+                            "m3_resid_abs_mean_deg=%.4f m3_delta_clip_rate=%.4f m3_kappa_corr=%.4f "
+                            "m3_gate_thresh=%.4f"
                         )
                         args_list.extend(
                             [
@@ -361,6 +366,7 @@ def _stage25_loop(
                                 metrics["m3_resid_abs_mean_deg"],
                                 metrics["m3_delta_clip_rate"],
                                 metrics["m3_kappa_corr_spearman"],
+                                metrics["m3_gate_threshold"],
                             ]
                         )
                     logging.info(base_msg, *args_list)
@@ -400,31 +406,40 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mix_ramp_steps", type=int, default=1500)
     parser.add_argument("--enable_m3", action="store_true")
     parser.add_argument(
+        "--m3_preset",
+        type=str,
+        choices=["phase1", "phase2", "phase3", "none"],
+        default="none",
+        help="Preset bundle for M3 fine-tuning hyperparameters",
+    )
+    parser.add_argument(
         "--m3_gate_mode",
         type=str,
-        default="kappa",
+        default=None,
         choices=["none", "kappa", "inv_kappa", "mcdrop"],
         help="Gate mode for residual calibrator",
     )
-    parser.add_argument("--m3_delta_max_deg", type=float, default=10.0)
-    parser.add_argument("--m3_delta_warmup_deg", type=float, default=2.0)
-    parser.add_argument("--m3_warmup_frac", type=float, default=0.1)
-    parser.add_argument("--m3_output_gain", type=float, default=1.0)
-    parser.add_argument("--m3_gain_start", type=float, default=0.0)
-    parser.add_argument("--m3_gain_end", type=float, default=1.0)
-    parser.add_argument("--m3_lambda_resid", type=float, default=5e-2)
-    parser.add_argument("--m3_lambda_gate_entropy", type=float, default=1e-3)
-    parser.add_argument("--m3_lambda_keep_target", type=float, default=0.0)
-    parser.add_argument("--m3_gate_keep_threshold", type=float, default=0.5)
-    parser.add_argument("--m3_gate_tau", type=float, default=1.0)
-    parser.add_argument("--m3_detach_m2", dest="m3_detach_m2", action="store_true")
+    parser.add_argument("--m3_delta_max_deg", "--m3_delta_cap_deg", type=float, default=None)
+    parser.add_argument("--m3_delta_warmup_deg", type=float, default=None)
+    parser.add_argument("--m3_warmup_frac", type=float, default=None)
+    parser.add_argument("--m3_output_gain", type=float, default=None)
+    parser.add_argument("--m3_gain_start", type=float, default=None)
+    parser.add_argument("--m3_gain_end", type=float, default=None)
+    parser.add_argument("--m3_gain_ramp_steps", type=int, default=None)
+    parser.add_argument("--m3_lambda_resid", "--m3_resid_reg_w", type=float, default=None)
+    parser.add_argument("--m3_lambda_gate_entropy", "--m3_entropy_w", type=float, default=None)
+    parser.add_argument("--m3_lambda_keep_target", type=float, default=None)
+    parser.add_argument("--m3_gate_keep_threshold", "--m3_gate_threshold", type=float, default=None)
+    parser.add_argument("--m3_gate_tau", "--m3_gate_temp", type=float, default=None)
+    parser.add_argument("--m3_detach_m2", dest="m3_detach_m2", action="store_true", default=None)
     parser.add_argument("--no_m3_detach_m2", dest="m3_detach_m2", action="store_false")
-    parser.set_defaults(m3_detach_m2=True)
-    parser.add_argument("--m3_detach_warmup_epochs", type=int, default=3)
-    parser.add_argument("--m3_keep_warmup_epochs", type=int, default=5)
-    parser.add_argument("--m3_target_keep_start", type=float, default=0.2)
-    parser.add_argument("--m3_target_keep_end", type=float, default=0.6)
-    parser.add_argument("--m3_freeze_m2", action="store_true")
+    parser.set_defaults(m3_detach_m2=None)
+    parser.add_argument("--m3_detach_warmup_epochs", type=int, default=None)
+    parser.add_argument("--m3_keep_warmup_epochs", "--m3_warmup_epochs", type=int, default=None)
+    parser.add_argument("--m3_target_keep_start", type=float, default=None)
+    parser.add_argument("--m3_target_keep_end", type=float, default=None)
+    parser.add_argument("--m3_quantile_keep", type=float, default=None)
+    parser.add_argument("--m3_freeze_m2", "--freeze_m2", action="store_true", default=None)
     parser.add_argument("--m3_apply_eval_only", action="store_true")
     parser.add_argument("--use_coral", action="store_true")
     parser.add_argument("--use_dann", action="store_true")
@@ -470,6 +485,37 @@ def _setup_logging(log_dir: Path, level: str, disable_file: bool) -> None:
         logging.info("File logging enabled at %s", log_path.as_posix())
 
 
+def _apply_m3_preset(cfg: Config, preset: str) -> None:
+    preset = preset.lower()
+    if preset not in {"phase1", "phase2", "phase3"}:
+        return
+    cfg.train.use_m3 = True
+    cfg.train.m3_freeze_m2 = True
+    cfg.train.m3_detach_m2 = True
+    cfg.train.m3_gate_keep_threshold = 0.15
+    cfg.train.m3_gate_tau = 1.5
+    cfg.train.m3_lambda_gate_entropy = 5e-3
+    cfg.train.m3_lambda_resid = 0.15
+    cfg.train.m3_delta_max_deg = 4.0
+    cfg.train.m3_delta_warmup_deg = 2.0
+    cfg.train.m3_gain_start = 0.3
+    cfg.train.m3_gain_end = 1.0
+    cfg.train.m3_gain_ramp_steps = 0
+    cfg.train.m3_detach_warmup_epochs = 2
+    cfg.train.m3_keep_warmup_epochs = 2
+    cfg.train.m3_target_keep_start = 0.2
+    cfg.train.m3_target_keep_end = 0.6
+    cfg.train.m3_quantile_keep = None
+    if preset == "phase1":
+        cfg.train.m3_gate_mode = "kappa"
+    elif preset == "phase2":
+        cfg.train.m3_gate_mode = "inv_kappa"
+    else:  # phase3
+        cfg.train.m3_gate_mode = "kappa"
+        cfg.train.m3_quantile_keep = 0.8
+        cfg.train.m3_gate_keep_threshold = 0.0
+
+
 def main() -> None:
     args = parse_args()
     set_seed(args.seed)
@@ -485,25 +531,51 @@ def main() -> None:
     cfg.train.epochs = args.epochs
     cfg.train.batch_size = args.batch_size
     cfg.train.log_dir = args.logdir
-    cfg.train.m3_gate_mode = args.m3_gate_mode
-    cfg.train.m3_delta_max_deg = args.m3_delta_max_deg
-    cfg.train.m3_delta_warmup_deg = args.m3_delta_warmup_deg
-    cfg.train.m3_warmup_frac = args.m3_warmup_frac
-    cfg.train.m3_detach_m2 = args.m3_detach_m2
-    cfg.train.m3_detach_warmup_epochs = args.m3_detach_warmup_epochs
-    cfg.train.m3_freeze_m2 = args.m3_freeze_m2 or args.phase == "finetune_m3"
-    cfg.train.m3_apply_eval_only = args.m3_apply_eval_only
-    cfg.train.m3_output_gain = args.m3_output_gain
-    cfg.train.m3_gain_start = args.m3_gain_start
-    cfg.train.m3_gain_end = args.m3_gain_end
-    cfg.train.m3_lambda_resid = args.m3_lambda_resid
-    cfg.train.m3_lambda_gate_entropy = args.m3_lambda_gate_entropy
-    cfg.train.m3_lambda_keep_target = args.m3_lambda_keep_target
-    cfg.train.m3_gate_keep_threshold = args.m3_gate_keep_threshold
-    cfg.train.m3_gate_tau = args.m3_gate_tau
-    cfg.train.m3_keep_warmup_epochs = args.m3_keep_warmup_epochs
-    cfg.train.m3_target_keep_start = args.m3_target_keep_start
-    cfg.train.m3_target_keep_end = args.m3_target_keep_end
+    if args.m3_preset != "none":
+        _apply_m3_preset(cfg, args.m3_preset)
+        cfg.train.use_m3 = True
+    if args.m3_gate_mode is not None:
+        cfg.train.m3_gate_mode = args.m3_gate_mode
+    if args.m3_delta_max_deg is not None:
+        cfg.train.m3_delta_max_deg = args.m3_delta_max_deg
+    if args.m3_delta_warmup_deg is not None:
+        cfg.train.m3_delta_warmup_deg = args.m3_delta_warmup_deg
+    if args.m3_warmup_frac is not None:
+        cfg.train.m3_warmup_frac = args.m3_warmup_frac
+    if args.m3_detach_m2 is not None:
+        cfg.train.m3_detach_m2 = args.m3_detach_m2
+    if args.m3_detach_warmup_epochs is not None:
+        cfg.train.m3_detach_warmup_epochs = args.m3_detach_warmup_epochs
+    if args.m3_freeze_m2 is not None:
+        cfg.train.m3_freeze_m2 = args.m3_freeze_m2
+    cfg.train.m3_freeze_m2 = cfg.train.m3_freeze_m2 or args.phase == "finetune_m3"
+    cfg.train.m3_apply_eval_only = cfg.train.m3_apply_eval_only or args.m3_apply_eval_only
+    if args.m3_output_gain is not None:
+        cfg.train.m3_output_gain = args.m3_output_gain
+    if args.m3_gain_start is not None:
+        cfg.train.m3_gain_start = args.m3_gain_start
+    if args.m3_gain_end is not None:
+        cfg.train.m3_gain_end = args.m3_gain_end
+    if args.m3_gain_ramp_steps is not None:
+        cfg.train.m3_gain_ramp_steps = max(0, args.m3_gain_ramp_steps)
+    if args.m3_lambda_resid is not None:
+        cfg.train.m3_lambda_resid = args.m3_lambda_resid
+    if args.m3_lambda_gate_entropy is not None:
+        cfg.train.m3_lambda_gate_entropy = args.m3_lambda_gate_entropy
+    if args.m3_lambda_keep_target is not None:
+        cfg.train.m3_lambda_keep_target = args.m3_lambda_keep_target
+    if args.m3_gate_keep_threshold is not None:
+        cfg.train.m3_gate_keep_threshold = args.m3_gate_keep_threshold
+    if args.m3_gate_tau is not None:
+        cfg.train.m3_gate_tau = args.m3_gate_tau
+    if args.m3_keep_warmup_epochs is not None:
+        cfg.train.m3_keep_warmup_epochs = args.m3_keep_warmup_epochs
+    if args.m3_target_keep_start is not None:
+        cfg.train.m3_target_keep_start = args.m3_target_keep_start
+    if args.m3_target_keep_end is not None:
+        cfg.train.m3_target_keep_end = args.m3_target_keep_end
+    if args.m3_quantile_keep is not None:
+        cfg.train.m3_quantile_keep = args.m3_quantile_keep
     cfg.data.input_scale = args.input_scale
     cfg.data.mix_warmup_steps = args.mix_warmup_steps
     cfg.data.mix_ramp_steps = args.mix_ramp_steps

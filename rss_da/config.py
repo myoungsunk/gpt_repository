@@ -55,6 +55,7 @@ class TrainConfig:
     m3_output_gain: float = 1.0
     m3_gain_start: float = 0.0
     m3_gain_end: float = 1.0
+    m3_gain_ramp_steps: int = 0
     m3_lambda_resid: float = 5e-2
     m3_lambda_gate_entropy: float = 1e-3
     m3_lambda_keep_target: float = 0.0
@@ -63,6 +64,7 @@ class TrainConfig:
     m3_target_keep_end: float = 0.6
     m3_keep_warmup_epochs: int = 5
     m3_gate_tau: float = 1.0
+    m3_quantile_keep: Optional[float] = None
 
 
 @dataclass

@@ -55,6 +55,7 @@ def _summarize_m3(
     mu: torch.Tensor,
     kappa: torch.Tensor,
     corr_fn,
+    threshold: float,
 ) -> Dict[str, float]:
     err_rad, err_deg = _error_stats(mu, theta)
     stats = {
@@ -65,6 +66,7 @@ def _summarize_m3(
         "resid_abs_mean_deg": torch.rad2deg(delta_effect.abs()).mean().item(),
         "resid_abs_p90_deg": torch.quantile(torch.rad2deg(delta_effect.abs()), 0.90).item(),
         "delta_clip_rate": (clip_mask & keep_mask.bool()).float().mean().item(),
+        "gate_threshold": threshold,
     }
     kappa_sample = kappa.mean(dim=-1)
     kappa_corr = corr_fn(kappa_sample, err_deg)
@@ -78,6 +80,7 @@ def analyze_stage1(
     trainer: Stage1Trainer,
     batch: Dict[str, torch.Tensor],
     gate_threshold: float,
+    quantile_keep: Optional[float],
 ) -> None:
     trainer.global_step = trainer.m3_warmup_steps + trainer.mix_ramp_steps + 1
     prepared = _prepare_batch(trainer, batch)
@@ -115,15 +118,27 @@ def analyze_stage1(
                 extras={},
             )
             mu_ref = m3_out["mu_ref"]
+            gate = m3_out["gate"]
+            keep_mask = m3_out["keep_mask"]
+            clip_mask = m3_out["clip_mask"]
+            delta_effect = m3_out["delta_effect"]
+            threshold_used = gate_threshold
+            if quantile_keep is not None and gate.numel() > 0:
+                q = float(min(max(quantile_keep, 0.0), 1.0))
+                threshold_tensor = torch.quantile(gate.detach(), q)
+                threshold_used = threshold_tensor.item()
+                keep_mask = gate >= threshold_tensor
+                clip_mask = keep_mask & (m3_out["delta"].abs() >= max(0.0, trainer.m3_delta_max_rad - 1e-6))
             stats = _summarize_m3(
-                m3_out["gate"],
-                m3_out["keep_mask"],
-                m3_out["delta_effect"],
-                m3_out["clip_mask"],
+                gate,
+                keep_mask,
+                delta_effect,
+                clip_mask,
                 theta_gt,
                 mu_ref,
                 kappa1,
                 Stage1Trainer._spearman_corr,
+                threshold_used,
             )
             print("[Stage-1] M3 metrics:")
             print(
@@ -135,8 +150,11 @@ def analyze_stage1(
                     stats["kappa_corr"],
                 )
             )
-            print("  gate_p10={:.4f} gate_p90={:.4f} resid_p90_deg={:.4f}".format(
-                stats["gate_p10"], stats["gate_p90"], stats["resid_abs_p90_deg"]
+            print("  gate_p10={:.4f} gate_p90={:.4f} resid_p90_deg={:.4f} gate_thresh={:.4f}".format(
+                stats["gate_p10"],
+                stats["gate_p90"],
+                stats["resid_abs_p90_deg"],
+                stats["gate_threshold"],
             ))
             print("  reliability bins (kappa_low, kappa_high, mean_abs_err_deg):")
             for low, high, err in stats["reliability_bins"]:
@@ -149,6 +167,7 @@ def analyze_stage25(
     trainer: Stage25Trainer,
     batch: Dict[str, torch.Tensor],
     gate_threshold: float,
+    quantile_keep: Optional[float],
 ) -> None:
     trainer.global_step = trainer.m3_warmup_steps + trainer.mix_ramp_steps + 1
     prepared = trainer._prepare_batch(batch)  # type: ignore[attr-defined]
@@ -186,15 +205,27 @@ def analyze_stage25(
                 extras={},
             )
             mu_ref = m3_out["mu_ref"]
+            gate = m3_out["gate"]
+            keep_mask = m3_out["keep_mask"]
+            clip_mask = m3_out["clip_mask"]
+            delta_effect = m3_out["delta_effect"]
+            threshold_used = gate_threshold
+            if quantile_keep is not None and gate.numel() > 0:
+                q = float(min(max(quantile_keep, 0.0), 1.0))
+                threshold_tensor = torch.quantile(gate.detach(), q)
+                threshold_used = threshold_tensor.item()
+                keep_mask = gate >= threshold_tensor
+                clip_mask = keep_mask & (m3_out["delta"].abs() >= max(0.0, trainer.m3_delta_max_rad - 1e-6))
             stats = _summarize_m3(
-                m3_out["gate"],
-                m3_out["keep_mask"],
-                m3_out["delta_effect"],
-                m3_out["clip_mask"],
+                gate,
+                keep_mask,
+                delta_effect,
+                clip_mask,
                 theta_gt,
                 mu_ref,
                 kappa1,
                 trainer._spearman_corr,
+                threshold_used,
             )
             print("[Stage-2.5] M3 metrics:")
             print(
@@ -206,8 +237,11 @@ def analyze_stage25(
                     stats["kappa_corr"],
                 )
             )
-            print("  gate_p10={:.4f} gate_p90={:.4f} resid_p90_deg={:.4f}".format(
-                stats["gate_p10"], stats["gate_p90"], stats["resid_abs_p90_deg"]
+            print("  gate_p10={:.4f} gate_p90={:.4f} resid_p90_deg={:.4f} gate_thresh={:.4f}".format(
+                stats["gate_p10"],
+                stats["gate_p90"],
+                stats["resid_abs_p90_deg"],
+                stats["gate_threshold"],
             ))
             print("  reliability bins (kappa_low, kappa_high, mean_abs_err_deg):")
             for low, high, err in stats["reliability_bins"]:
@@ -225,7 +259,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--logdir", type=str, default="./runs/demo")
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--enable_m3", action="store_true")
+    parser.add_argument("--m3_gate_mode", choices=["none", "kappa", "inv_kappa", "mcdrop"], default="kappa")
     parser.add_argument("--m3_gate_threshold", type=float, default=0.5)
+    parser.add_argument("--m3_gate_temp", type=float, default=1.0)
+    parser.add_argument("--m3_quantile_keep", type=float, default=None)
     return parser.parse_args()
 
 
@@ -233,6 +270,10 @@ def main() -> None:
     args = parse_args()
     cfg = Config()
     cfg.train.use_m3 = args.enable_m3
+    cfg.train.m3_gate_mode = args.m3_gate_mode
+    cfg.train.m3_gate_tau = args.m3_gate_temp
+    cfg.train.m3_gate_keep_threshold = args.m3_gate_threshold
+    cfg.train.m3_quantile_keep = args.m3_quantile_keep
     cfg.train.log_dir = args.logdir
     cfg.data.roots = [args.data_root]
     cfg.data.input_scale = "relative_db"
@@ -252,7 +293,7 @@ def main() -> None:
         trainer = Stage1Trainer(cfg)
         trainer.train(False)
         batch = next(iter(loader))
-        analyze_stage1(trainer, batch, args.m3_gate_threshold)
+        analyze_stage1(trainer, batch, args.m3_gate_threshold, args.m3_quantile_keep)
     else:
         scaler_path = scaler_root if scaler_root.exists() else None
         loader = _build_dataloader(
@@ -268,7 +309,7 @@ def main() -> None:
         trainer = Stage25Trainer(cfg, teacher_modules=None)
         trainer.train(False)
         batch = next(iter(loader))
-        analyze_stage25(trainer, batch, args.m3_gate_threshold)
+        analyze_stage25(trainer, batch, args.m3_gate_threshold, args.m3_quantile_keep)
 
 
 if __name__ == "__main__":

@@ -52,6 +52,7 @@ class Stage25Outputs:
     m3_kappa_corr_spearman: Optional[float] = None
     m3_residual_penalty: Optional[float] = None
     m3_gate_entropy: Optional[float] = None
+    m3_gate_threshold: Optional[float] = None
 
 
 def _ensure_two_dim(tensor: torch.Tensor) -> torch.Tensor:
@@ -101,6 +102,7 @@ class Stage25Trainer:
         self.m3_delta_warmup_rad = min(self.m3_delta_max_rad, math.radians(cfg.train.m3_delta_warmup_deg))
         self.m3_gain_start = cfg.train.m3_gain_start
         self.m3_gain_end = cfg.train.m3_gain_end
+        self.m3_gain_ramp_steps = max(0, cfg.train.m3_gain_ramp_steps)
         self.m3_apply_eval_only = cfg.train.m3_apply_eval_only
         self.m3_freeze_m2 = cfg.train.m3_freeze_m2 or (self.phase == "finetune_m3")
         base_params = list(
@@ -183,6 +185,7 @@ class Stage25Trainer:
         self.m3_lambda_gate = cfg.train.m3_lambda_gate_entropy
         self.m3_lambda_keep = cfg.train.m3_lambda_keep_target
         self.m3_gate_keep_threshold = cfg.train.m3_gate_keep_threshold
+        self.m3_quantile_keep = cfg.train.m3_quantile_keep
         keep_steps = int(total_span * cfg.train.m3_keep_warmup_epochs / max(cfg.train.epochs, 1))
         self.m3_keep_schedule_steps = max(1, keep_steps if keep_steps > 0 else self.m3_warmup_steps)
         self.m3_target_keep_start = cfg.train.m3_target_keep_start
@@ -289,7 +292,11 @@ class Stage25Trainer:
         warm_delta = self.m3_delta_warmup_rad
         effective_delta = warm_delta + (base_delta - warm_delta) * ramp
         keep_progress = min(1.0, self.global_step / max(1, self.m3_keep_schedule_steps))
-        gain = self.m3_gain_start + (self.m3_gain_end - self.m3_gain_start) * keep_progress
+        if self.m3_gain_ramp_steps > 0:
+            gain_progress = min(1.0, self.global_step / self.m3_gain_ramp_steps)
+        else:
+            gain_progress = keep_progress
+        gain = self.m3_gain_start + (self.m3_gain_end - self.m3_gain_start) * gain_progress
         keep_target = self.m3_target_keep_start + (self.m3_target_keep_end - self.m3_target_keep_start) * keep_progress
         return ramp, effective_delta, gain, keep_target
 
@@ -370,8 +377,16 @@ class Stage25Trainer:
             gate = m3_out["gate"]
             gate_raw = m3_out["gate_raw"]
             delta_effect = m3_out["delta_effect"]
-            keep_mask = m3_out["keep_mask"].float()
-            clip_mask = m3_out["clip_mask"]
+            delta_raw = m3_out["delta"]
+            keep_mask_bool = m3_out["keep_mask"]
+            threshold_used = float(self.m3_gate_keep_threshold)
+            if self.m3_quantile_keep is not None and gate.numel() > 0:
+                q = float(min(max(self.m3_quantile_keep, 0.0), 1.0))
+                quantile_value = torch.quantile(gate.detach(), q)
+                threshold_used = quantile_value.item()
+                keep_mask_bool = gate >= quantile_value
+            clip_mask = keep_mask_bool & (delta_raw.abs() >= max(0.0, delta_cap - 1e-6))
+            keep_mask = keep_mask_bool.float()
             m3_resid_penalty = delta_effect.pow(2).mean() * self.m3_lambda_resid
             gate_clamped = torch.clamp(gate, min=1e-6, max=1 - 1e-6)
             gate_entropy = -(
@@ -414,6 +429,7 @@ class Stage25Trainer:
                     kappa_corr,
                     m3_resid_penalty.detach().item(),
                     m3_gate_penalty.detach().item(),
+                    threshold_used,
                 )
         loss_sup = von_mises_nll(mu1_s, kappa1_s, theta_gt)
         recon = recon_loss(
@@ -526,6 +542,7 @@ class Stage25Trainer:
                 0.0,
                 m3_resid_penalty.detach().item(),
                 m3_gate_penalty.detach().item(),
+                float(self.m3_gate_keep_threshold),
             )
         deg_rmse = circular_mean_error_deg(mu_eval.detach(), theta_gt.detach()).item()
         outputs = Stage25Outputs(
@@ -553,6 +570,7 @@ class Stage25Trainer:
             m3_kappa_corr_spearman=m3_stats[8] if m3_stats is not None else None,
             m3_residual_penalty=m3_stats[9] if m3_stats is not None else None,
             m3_gate_entropy=m3_stats[10] if m3_stats is not None else None,
+            m3_gate_threshold=m3_stats[11] if m3_stats is not None else None,
         )
         return outputs
 
