@@ -5,6 +5,7 @@ from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 
 from rss_da.config import Config
@@ -19,6 +20,7 @@ from rss_da.models.m2 import DoAPredictor
 from rss_da.models.m3 import ResidualCalibrator
 from rss_da.training.ema import build_ema, update_ema
 from rss_da.utils.metrics import circular_mean_error_deg
+from rss_da.utils.phi_gate import compute_phi_gate
 
 @dataclass
 class Stage25Outputs:
@@ -48,6 +50,11 @@ class Stage25Outputs:
     m3_residual_penalty: Optional[float] = None
     m3_gate_entropy: Optional[float] = None
     m3_gate_threshold: Optional[float] = None
+    decoder_recon_mae_4rss: Optional[float] = None
+    decoder_recon_mae_4rss_p90: Optional[float] = None
+    phi_gate_keep_ratio: Optional[float] = None
+    recon_mae_theta_corr: Optional[float] = None
+    forward_consistency: Optional[float] = None
 
 def _ensure_two_dim(tensor: torch.Tensor) -> torch.Tensor:
     if tensor.ndim == 3:
@@ -335,9 +342,40 @@ class Stage25Trainer:
         h5_s = self.e5(z5d)
         r4_hat_s = self.decoder(h5_s.detach(), mu0_s)
         h4_hat_s = self.e4(r4_hat_s.detach())
-        mask = torch.zeros(z5d.size(0), 1, device=self.device)
-        h_s = self.fuse(h5_s, h4_hat_s, mask)
-        phi_s = self.adapter(h_s).detach()
+        batch_size = z5d.size(0)
+        ones_mask = torch.ones(batch_size, 1, device=self.device, dtype=h5_s.dtype)
+        phi_gate_keep_ratio: Optional[float] = None
+        decoder_mae_samples: Optional[torch.Tensor] = None
+        decoder_recon_mae_4rss: Optional[float] = None
+        decoder_recon_mae_4rss_p90: Optional[float] = None
+        forward_consistency: Optional[float] = None
+        recon_mae_theta_corr: Optional[float] = None
+        r4_gt = four_rss if four_rss.numel() == batch_size * 4 else None
+        phi_gate = torch.ones(batch_size, 1, device=self.device, dtype=h5_s.dtype)
+        if r4_gt is not None:
+            decoder_mae_samples = torch.abs(r4_hat_s.detach() - r4_gt.detach()).mean(dim=-1)
+            decoder_recon_mae_4rss = decoder_mae_samples.mean().item()
+            decoder_recon_mae_4rss_p90 = torch.quantile(decoder_mae_samples, 0.90).item()
+            gate_flat, phi_gate_keep_ratio, _ = compute_phi_gate(
+                decoder_mae_samples,
+                enabled=self.cfg.train.phi_gate_enabled,
+                threshold=self.cfg.train.phi_gate_threshold,
+                quantile=self.cfg.train.phi_gate_quantile,
+                min_keep=self.cfg.train.phi_gate_min_keep,
+            )
+            phi_gate = gate_flat.unsqueeze(-1).to(dtype=h5_s.dtype)
+        elif self.cfg.train.phi_gate_enabled:
+            phi_gate_keep_ratio = 1.0
+        h_pass0 = self.fuse(h5_s, h4_hat_s, ones_mask)
+        phi_pass0 = self.adapter(h_pass0).detach()
+        h_s = self.fuse(h5_s, h4_hat_s, phi_gate)
+        phi_s = (self.adapter(h_s) * phi_gate).detach()
+        phi_gt = None
+        if r4_gt is not None:
+            h4_gt = self.e4(r4_gt.detach())
+            h_gt = self.fuse(h5_s, h4_gt, ones_mask)
+            phi_gt = self.adapter(h_gt).detach()
+            forward_consistency = F.cosine_similarity(phi_pass0, phi_gt, dim=-1).mean().item()
         mu1_s, kappa1_s, logits_s = self.m2(z5d, phi_s)
         mu1_s = _ensure_two_dim(mu1_s)
         kappa1_s = _ensure_two_dim(kappa1_s)
@@ -435,6 +473,7 @@ class Stage25Trainer:
         )
         teacher_out = self._teacher_forward(z5d)
         gate = torch.sigmoid(teacher_out["kappa1"].mean(dim=-1, keepdim=True))
+        gate = gate * phi_gate
         kd_losses = kd_loss_bundle(
             {
                 "mu_student": mu1_s,
@@ -538,6 +577,10 @@ class Stage25Trainer:
                 float(self.m3_gate_keep_threshold),
             )
         deg_rmse = circular_mean_error_deg(mu_eval.detach(), theta_gt.detach()).item()
+        if decoder_mae_samples is not None:
+            err = torch.atan2(torch.sin(mu_eval.detach() - theta_gt.detach()), torch.cos(mu_eval.detach() - theta_gt.detach()))
+            err_deg = torch.rad2deg(err.abs()).mean(dim=-1)
+            recon_mae_theta_corr = self._spearman_corr(decoder_mae_samples.detach(), err_deg.detach())
         outputs = Stage25Outputs(
             loss_total=total_loss.detach().item(),
             sup_nll=loss_sup.detach().item(),
@@ -564,6 +607,11 @@ class Stage25Trainer:
             m3_residual_penalty=m3_stats[9] if m3_stats is not None else None,
             m3_gate_entropy=m3_stats[10] if m3_stats is not None else None,
             m3_gate_threshold=m3_stats[11] if m3_stats is not None else None,
+            decoder_recon_mae_4rss=decoder_recon_mae_4rss,
+            decoder_recon_mae_4rss_p90=decoder_recon_mae_4rss_p90,
+            phi_gate_keep_ratio=phi_gate_keep_ratio,
+            recon_mae_theta_corr=recon_mae_theta_corr,
+            forward_consistency=forward_consistency,
         )
         return outputs
 
