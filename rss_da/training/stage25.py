@@ -105,6 +105,22 @@ class Stage25Trainer:
         self.m3_gain_ramp_steps = max(0, cfg.train.m3_gain_ramp_steps)
         self.m3_apply_eval_only = cfg.train.m3_apply_eval_only
         self.m3_freeze_m2 = cfg.train.m3_freeze_m2 or (self.phase == "finetune_m3")
+        self.align_method = ""
+        if cfg.train.use_coral:
+            self.align_method = "coral"
+        elif cfg.train.use_dann:
+            self.align_method = "dann"
+        elif cfg.train.use_cdan:
+            self.align_method = "cdan"
+        self.domain_classifier: Optional[nn.Module] = None
+        if self.align_method in {"dann", "cdan"}:
+            in_dim = latent_dim if self.align_method == "dann" else latent_dim * 4
+            self.domain_classifier = nn.Sequential(
+                nn.Linear(in_dim, latent_dim),
+                nn.ReLU(),
+                nn.Linear(latent_dim, 2),
+            ).to(self.device)
+
         base_params = list(
             chain(
                 self.e4.parameters(),
@@ -113,6 +129,7 @@ class Stage25Trainer:
                 self.adapter.parameters(),
                 self.decoder.parameters(),
                 self.m3.parameters() if self.m3 is not None else [],
+                self.domain_classifier.parameters() if self.domain_classifier is not None else [],
             )
         )
         if not self.m3_freeze_m2:
@@ -150,21 +167,6 @@ class Stage25Trainer:
             self.uncertainty = UncertaintyWeighting(task_names)
         else:
             self.uncertainty = None
-        self.align_method = ""
-        if cfg.train.use_coral:
-            self.align_method = "coral"
-        elif cfg.train.use_dann:
-            self.align_method = "dann"
-        elif cfg.train.use_cdan:
-            self.align_method = "cdan"
-        self.domain_classifier: Optional[nn.Module] = None
-        if self.align_method in {"dann", "cdan"}:
-            in_dim = latent_dim if self.align_method == "dann" else latent_dim * 4
-            self.domain_classifier = nn.Sequential(
-                nn.Linear(in_dim, latent_dim),
-                nn.ReLU(),
-                nn.Linear(latent_dim, 2),
-            ).to(self.device)
         self.teacher = self._build_teacher(teacher_modules)
         shared_modules = [self.e5, self.decoder, self.m2]
         if self.m3 is not None:
