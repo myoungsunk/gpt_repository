@@ -1,6 +1,7 @@
 """합성 RSS 데이터 생성기."""
 from __future__ import annotations
 
+import argparse
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,8 +43,8 @@ def _antenna_pattern(theta_rad: np.ndarray, config: SynthConfig) -> Tuple[np.nda
     return main_gain, side_gain
 
 
-def generate_synth_samples(config: SynthConfig) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
-    rng = np.random.default_rng(0)
+def generate_synth_samples(config: SynthConfig, *, seed: int = 0) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
+    rng = np.random.default_rng(seed)
     theta = rng.uniform(-np.pi, np.pi, size=(config.num_samples, 2))  # rad
     distances = rng.uniform(1.0, 50.0, size=(config.num_samples, 2))  # m
 
@@ -62,27 +63,21 @@ def generate_synth_samples(config: SynthConfig) -> Tuple[np.ndarray, Dict[str, n
     four_rss = np.stack([rss1, rss2, rss3, rss4], axis=-1) + noise
     four_rss = four_rss.astype(np.float32)
 
-    c_meas = np.stack(
-        [
-            10 * np.log10(np.sum(10 ** (four_rss[:, :2] / 10), axis=-1)),
-            10 * np.log10(np.sum(10 ** (four_rss[:, 2:] / 10), axis=-1)),
-        ],
-        axis=-1,
-    ).astype(np.float32)
+    c_meas = np.stack([
+        10 * np.log10(np.sum(10 ** (four_rss[:, :2] / 10), axis=-1)),
+        10 * np.log10(np.sum(10 ** (four_rss[:, 2:] / 10), axis=-1)),
+    ], axis=-1).astype(np.float32)
 
     delta = rss1 - rss2
     sum_db = rss1 + rss2
     log_ratio = np.log1p(np.abs(delta))
-    z5d = np.stack(
-        [
-            (rss1 + rss3) / 2,
-            (rss2 + rss4) / 2,
-            delta,
-            sum_db,
-            log_ratio,
-        ],
-        axis=-1,
-    ).astype(np.float32)
+    z5d = np.stack([
+        (rss1 + rss3) / 2,
+        (rss2 + rss4) / 2,
+        delta,
+        sum_db,
+        log_ratio,
+    ], axis=-1).astype(np.float32)
 
     data = {
         "z5d": z5d,
@@ -118,6 +113,34 @@ def save_dataset(path: Path, data: Dict[str, np.ndarray]) -> None:
 def load_dataset(path: Path) -> Dict[str, np.ndarray]:
     payload = json.loads(path.read_text())
     return {key: np.asarray(value, dtype=np.float32) for key, value in payload.items()}
+
+
+def _build_argparser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Generate synthetic RSS-DoA samples.")
+    parser.add_argument("--out", type=Path, required=True, help="저장할 JSON 경로")
+    parser.add_argument("--num-samples", type=int, default=256, help="생성할 샘플 수")
+    parser.add_argument("--seed", type=int, default=0, help="난수 시드")
+    parser.add_argument("--tx-power", type=float, default=0.0, help="송신 전력(dBm)")
+    parser.add_argument("--pathloss-exp", type=float, default=2.0, help="경로손실 지수")
+    parser.add_argument("--noise-std", type=float, default=2.0, help="RSS 노이즈 표준편차(dB)")
+    return parser
+
+
+def main() -> None:
+    parser = _build_argparser()
+    args = parser.parse_args()
+    config = SynthConfig(
+        num_samples=args.num_samples,
+        tx_power_dbm=args.tx_power,
+        pathloss_exponent=args.pathloss_exp,
+        noise_std_db=args.noise_std,
+    )
+    _, data = generate_synth_samples(config, seed=args.seed)
+    save_dataset(args.out, data)
+
+
+if __name__ == "__main__":
+    main()
 
 
 __all__ = [

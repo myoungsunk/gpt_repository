@@ -1,0 +1,13 @@
+[2025-11-03 23:31:09,781][INFO] Console log level set to INFO
+[2025-11-03 23:31:09,781][INFO] File logging enabled at runs/s1_stepB_conservative/train.log
+[2025-11-03 23:31:09,781][INFO] Resolved training epochs: cfg=30 (requested --epochs 30)
+[2025-11-03 23:31:09,781][INFO] Starting Stage-1 training for 30 epochs
+[2025-11-03 23:31:10,614][INFO] [Stage-1][M3] resolved schedule: epochs=30 warmup_steps=100 detach_steps=33 keep_schedule_steps=33 gain_ramp_steps=30
+[2025-11-03 23:31:10,615][INFO] [Stage-1][M3] controls: gate_mode=kappa gate_tau=0.70 keep_threshold=0.700 quantile_keep=None gain_start=0.000 gain_end=0.500 delta_max_deg=1.50
+[2025-11-03 23:31:10,615][INFO] Stage-1 trainer initialized on device: cpu
+[2025-11-03 23:31:10,615][INFO] Loading Stage-1 weights from runs/s1_phaseA_m2/phaseA/best_m2.pth
+[2025-11-03 23:31:10,623][INFO] Loading 1 dataset from rss_da\data\raw_data\standardized_v2\stage1_rel.csv
+[2025-11-03 23:31:10,970][INFO] Loaded 8123 samples for stage 1
+[2025-11-03 23:31:10,978][INFO] Saved z5d scaler to runs/s1_stepB_conservative/phaseB/meta/stage1/z5d_scaler.pkl
+[2025-11-03 23:31:10,981][INFO] [Stage-1] Starting epoch 1/30
+[2025-11-03 23:31:10,983][INFO] [Stage-1][debug] z5d stats mean=0.100 std=0.997 min=-2.269 max=2.006

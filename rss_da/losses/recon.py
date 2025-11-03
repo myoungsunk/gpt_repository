@@ -25,6 +25,7 @@ def recon_loss(
     c_meas_rel_db: Optional[torch.Tensor] = None,  # torch.FloatTensor[B,2]
     input_scale: str = "relative_db",
     physics_ctx: Optional[Dict[str, object]] = None,
+    mix_variance_floor: float = 1.0,
 ) -> Dict[str, torch.Tensor]:
     """전방 일관성 및 물리 제약 손실."""
 
@@ -36,15 +37,29 @@ def recon_loss(
     if scale == "relative_db":
         if c_meas_rel_db is not None and c_meas_rel_db.numel() > 0:
             c_hat_rel = combine_r4_rel_to_c_rel(r4_hat_dbm)
-            losses["mix"] = _safe_mse(c_hat_rel, c_meas_rel_db)
+            mix_raw = _safe_mse(c_hat_rel, c_meas_rel_db)
+            variance = torch.var(c_meas_rel_db.detach().view(-1), unbiased=False)
+            variance = torch.clamp(variance, min=mix_variance_floor)
+            losses["mix_raw"] = mix_raw
+            losses["mix_var"] = variance
+            losses["mix"] = mix_raw / variance
         else:
-            losses["mix"] = torch.zeros(1, device=r4_hat_dbm.device)
+            zero = r4_hat_dbm.new_zeros(1)
+            losses["mix_raw"] = zero
+            losses["mix_var"] = r4_hat_dbm.new_ones(1)
+            losses["mix"] = zero
     else:
         if c_meas_dbm is not None:
             c_hat = combine_r4_to_c(r4_hat_dbm)  # torch.FloatTensor[B,2]
-            losses["mix"] = _safe_mse(c_hat, c_meas_dbm)
+            mix_raw = _safe_mse(c_hat, c_meas_dbm)
+            losses["mix_raw"] = mix_raw
+            losses["mix_var"] = r4_hat_dbm.new_ones(1)
+            losses["mix"] = mix_raw
         else:
-            losses["mix"] = torch.zeros(1, device=r4_hat_dbm.device)
+            zero = r4_hat_dbm.new_zeros(1)
+            losses["mix_raw"] = zero
+            losses["mix_var"] = r4_hat_dbm.new_ones(1)
+            losses["mix"] = zero
 
     if r4_gt_dbm is not None and r4_gt_dbm.numel() > 0:
         losses["data"] = _safe_mse(r4_hat_dbm, r4_gt_dbm)

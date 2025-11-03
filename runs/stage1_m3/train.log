@@ -1,0 +1,18 @@
+[2025-11-03 16:20:25,145][INFO] Console log level set to INFO
+[2025-11-03 16:20:25,145][INFO] File logging enabled at runs/stage1_m3/train.log
+[2025-11-03 16:20:25,146][INFO] Starting Stage-1 training for 5 epochs
+[2025-11-03 16:20:25,949][INFO] Stage-1 trainer initialized on device: cpu
+[2025-11-03 16:20:25,949][WARNING] data\stage1_rel.csv not found. Falling back to synthetic samples.
+[2025-11-03 16:20:25,950][INFO] Generated synthetic 1 dataset with 128 samples for batch size 32
+[2025-11-03 16:20:25,952][INFO] Saved z5d scaler to runs/stage1_m3/phaseB/meta/stage1/z5d_scaler.pkl
+[2025-11-03 16:20:25,954][INFO] [Stage-1] Starting epoch 1/5
+[2025-11-03 16:20:25,955][INFO] [Stage-1][debug] z5d stats mean=0.070 std=0.998 min=-2.341 max=3.568
+[2025-11-03 16:20:25,972][INFO] [Stage-1][step=0] loss=8.4904 sup0_nll=4.2034 sup1_nll=4.2870 data_raw=4982.8901 mix_norm=71.7225 mix_raw=4471.9600 mix_w=0.000000 mix_w_norm=0.0000 mix_var=62.3509 phys=0.0000 degRMSE=89.744 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.2144 m3_gate_thresh=0.1500
+[2025-11-03 16:20:26,016][INFO] Saved best Stage-1 checkpoint to runs/stage1_m3/phaseB/best_m3.pth (degRMSE=90.4079)
+[2025-11-03 16:20:26,016][INFO] [Stage-1] Starting epoch 2/5
+[2025-11-03 16:20:26,056][INFO] Saved best Stage-1 checkpoint to runs/stage1_m3/phaseB/best_m3.pth (degRMSE=86.3058)
+[2025-11-03 16:20:26,057][INFO] [Stage-1] Starting epoch 3/5
+[2025-11-03 16:20:26,088][INFO] [Stage-1][step=10] loss=8.2448 sup0_nll=4.0898 sup1_nll=4.1550 data_raw=5089.1074 mix_norm=49.2248 mix_raw=4701.9966 mix_w=0.000000 mix_w_norm=0.0000 mix_var=95.5209 phys=0.0000 degRMSE=84.155 m3_enabled=1 m3_gate_mean=0.0000 m3_keep_ratio=0.0000 m3_resid_abs_mean_deg=0.0000 m3_delta_clip_rate=0.0000 m3_kappa_corr=0.2449 m3_gate_thresh=0.1500
+[2025-11-03 16:20:26,100][INFO] [Stage-1] Starting epoch 4/5
+[2025-11-03 16:20:26,137][INFO] [Stage-1] Starting epoch 5/5
+[2025-11-03 16:20:26,178][INFO] Saved best Stage-1 checkpoint to runs/stage1_m3/phaseB/best_m3.pth (degRMSE=85.9442)

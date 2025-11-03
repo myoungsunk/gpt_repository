@@ -1,0 +1,15 @@
+[2025-11-03 16:19:59,790][INFO] Console log level set to INFO
+[2025-11-03 16:19:59,790][INFO] File logging enabled at runs/stage1_test/train.log
+[2025-11-03 16:19:59,790][INFO] Starting Stage-1 training for 3 epochs
+[2025-11-03 16:20:00,636][INFO] Stage-1 trainer initialized on device: cpu
+[2025-11-03 16:20:00,637][WARNING] data\stage1_rel.csv not found. Falling back to synthetic samples.
+[2025-11-03 16:20:00,638][INFO] Generated synthetic 1 dataset with 128 samples for batch size 32
+[2025-11-03 16:20:00,639][INFO] Saved z5d scaler to runs/stage1_test/phaseA/meta/stage1/z5d_scaler.pkl
+[2025-11-03 16:20:00,642][INFO] [Stage-1] Starting epoch 1/3
+[2025-11-03 16:20:00,643][INFO] [Stage-1][debug] z5d stats mean=0.010 std=1.037 min=-2.718 max=2.880
+[2025-11-03 16:20:00,651][INFO] [Stage-1][step=0] loss=4.1755 sup0_nll=4.1755 sup1_nll=0.0000 data_raw=0.0000 mix_norm=0.0000 mix_raw=0.0000 mix_w=0.000000 mix_w_norm=0.0000 mix_var=1.0000 phys=0.0000 degRMSE=93.544
+[2025-11-03 16:20:00,669][INFO] Saved best Stage-1 checkpoint to runs/stage1_test/phaseA/best_m2.pth (degRMSE=82.4330)
+[2025-11-03 16:20:00,670][INFO] [Stage-1] Starting epoch 2/3
+[2025-11-03 16:20:00,711][INFO] [Stage-1] Starting epoch 3/3
+[2025-11-03 16:20:00,734][INFO] [Stage-1][step=10] loss=6.9863 sup0_nll=3.4377 sup1_nll=3.5486 data_raw=4919.2334 mix_norm=52.8650 mix_raw=4391.5044 mix_w=0.000000 mix_w_norm=0.0000 mix_var=83.0702 phys=0.0000 degRMSE=77.941
+[2025-11-03 16:20:00,756][INFO] Saved best Stage-1 checkpoint to runs/stage1_test/phaseA/best_m2.pth (degRMSE=77.4929)

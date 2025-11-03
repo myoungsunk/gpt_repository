@@ -18,6 +18,7 @@ class TrainConfig:
     """학습 관련 하이퍼파라미터."""
 
     stage: str = "1"  # {"1", "2.5"}
+    phase: str = "pretrain_m2"  # {"pretrain_m2", "finetune_m3"}
     latent_dim: int = 128
     phi_dim: int = 16
     batch_size: int = 32
@@ -43,6 +44,31 @@ class TrainConfig:
     log_dir: str = "./logs"
     seed: int = 42
     m2_head_lr_scale: float = 2.0
+    m3_gate_mode: str = "kappa"  # {"none", "kappa", "inv_kappa", "mcdrop"}
+    m3_delta_max_deg: float = 10.0
+    m3_delta_warmup_deg: float = 2.0
+    m3_warmup_frac: float = 0.1
+    m3_detach_m2: bool = True
+    m3_detach_warmup_epochs: int = 3
+    m3_freeze_m2: bool = False
+    m3_apply_eval_only: bool = False
+    m3_output_gain: float = 1.0
+    m3_gain_start: float = 0.0
+    m3_gain_end: float = 1.0
+    m3_gain_ramp_steps: int = 0
+    m3_lambda_resid: float = 5e-2
+    m3_lambda_gate_entropy: float = 1e-3
+    m3_lambda_keep_target: float = 0.0
+    m3_gate_keep_threshold: float = 0.5
+    m3_target_keep_start: float = 0.2
+    m3_target_keep_end: float = 0.6
+    m3_keep_warmup_epochs: int = 5
+    m3_gate_tau: float = 1.0
+    m3_quantile_keep: Optional[float] = None
+    phi_gate_enabled: bool = True
+    phi_gate_threshold: Optional[float] = None
+    phi_gate_quantile: Optional[float] = 0.6
+    phi_gate_min_keep: float = 0.0
 
 
 @dataclass
@@ -59,6 +85,8 @@ class DataConfig:
     input_scale: str = "relative_db"  # {"relative_db", "absolute_dbm"}
     mix_warmup_steps: int = 500
     mix_ramp_steps: int = 1500
+    mix_weight_max: float = 0.25
+    mix_variance_floor: float = 1.0
     scaler_dir: str = "meta"
 
 
