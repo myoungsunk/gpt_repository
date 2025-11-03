@@ -59,10 +59,7 @@ class Stage1Outputs:
     phi_quality_improve_corr: Optional[float] = None
     decoder_recon_mae_4rss: Optional[float] = None
     grad_norm_m3: Optional[float] = None
-<<<<<<< Updated upstream
-=======
 
->>>>>>> Stashed changes
 
 def _ensure_two_dim(tensor: torch.Tensor) -> torch.Tensor:
     """혼합 모델 대응."""
@@ -455,18 +452,6 @@ class Stage1Trainer:
                         "err_delta_mean_deg": err_delta_mean,
                         "phi_quality_corr": phi_corr,
                     }
-<<<<<<< Updated upstream
-        loss_sup1 = von_mises_nll(mu1, kappa1, theta_gt)
-        r4_gt = four_rss if four_rss.numel() == z5d.size(0) * 4 else None
-        recon = recon_loss(
-            r4_hat,
-            r4_gt_dbm=r4_gt,
-            c_meas_dbm=c_meas,
-            c_meas_rel_db=c_meas_rel,
-            input_scale=self.cfg.data.input_scale,
-            mix_variance_floor=self.mix_variance_floor,
-        )
-=======
             loss_sup1 = von_mises_nll(mu1, kappa1, theta_gt)
             r4_gt = four_rss if four_rss.numel() == z5d.size(0) * 4 else None
             recon = recon_loss(
@@ -477,7 +462,6 @@ class Stage1Trainer:
                 input_scale=self.cfg.data.input_scale,
                 mix_variance_floor=self.mix_variance_floor,
             )
->>>>>>> Stashed changes
         w_sup, _, w_mix, _, w_phys = self.cfg.train.loss_weights
         mix_scale = self._mix_weight()
         mix_weight = min(w_mix * mix_scale, self.mix_weight_cap)
