@@ -14,6 +14,7 @@ def compute_phi_gate(
     threshold: Optional[float] = None,
     quantile: Optional[float] = 0.6,
     min_keep: float = 0.0,
+    min_samples_for_quantile: int = 8,
 ) -> Tuple[torch.Tensor, float, Optional[float]]:
     """Resolve a binary gate from reconstruction errors.
 
@@ -25,6 +26,9 @@ def compute_phi_gate(
         quantile: Optional quantile ``Q_p`` for adaptive thresholding when
             ``threshold`` is ``None``.
         min_keep: Lower bound on the keep ratio to avoid degenerate all-zero gates.
+        min_samples_for_quantile: Minimum batch size required to trust a quantile
+            estimate. Smaller batches fall back to the mean error as a stable
+            threshold.
 
     Returns:
         mask: ``torch.FloatTensor[B]`` containing zeros/ones.
@@ -45,7 +49,11 @@ def compute_phi_gate(
         used_threshold = float(threshold)
     elif quantile is not None:
         q = float(min(max(quantile, 0.0), 1.0))
-        used_threshold = torch.quantile(errs, q).item()
+        if errs.numel() >= max(1, min_samples_for_quantile):
+            used_threshold = torch.quantile(errs, q).item()
+        else:
+            # 작은 배치에서는 분위수 추정이 불안정하므로 평균을 대체 임계값으로 사용
+            used_threshold = errs.mean().item()
 
     if used_threshold is not None:
         mask = (errs <= used_threshold).to(dtype=errs.dtype)

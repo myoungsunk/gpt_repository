@@ -62,6 +62,7 @@ class Stage1Outputs:
     decoder_recon_mae_4rss: Optional[float] = None
     decoder_recon_mae_4rss_p90: Optional[float] = None
     phi_gate_keep_ratio: Optional[float] = None
+    phi_gate_threshold: Optional[float] = None
     recon_mae_theta_corr: Optional[float] = None
     forward_consistency: Optional[float] = None
     grad_norm_m3: Optional[float] = None
@@ -343,6 +344,7 @@ class Stage1Trainer:
         decoder_recon_mae_4rss_p90: Optional[float] = None
         decoder_mae_samples: Optional[torch.Tensor] = None
         phi_gate_keep_ratio: Optional[float] = None
+        phi_gate_threshold: Optional[float] = None
         forward_consistency: Optional[float] = None
         recon_mae_theta_corr: Optional[float] = None
         if enable_pass1:
@@ -357,7 +359,7 @@ class Stage1Trainer:
                 decoder_mae_samples = torch.abs(r4_hat.detach() - r4_gt.detach()).mean(dim=-1)
                 decoder_recon_mae_4rss = decoder_mae_samples.mean().item()
                 decoder_recon_mae_4rss_p90 = torch.quantile(decoder_mae_samples, 0.90).item()
-                gate_flat, phi_gate_keep_ratio, _ = compute_phi_gate(
+                gate_flat, phi_gate_keep_ratio, phi_gate_threshold = compute_phi_gate(
                     decoder_mae_samples,
                     enabled=self.cfg.train.phi_gate_enabled,
                     threshold=self.cfg.train.phi_gate_threshold,
@@ -594,6 +596,7 @@ class Stage1Trainer:
             decoder_recon_mae_4rss=decoder_recon_mae_4rss,
             decoder_recon_mae_4rss_p90=decoder_recon_mae_4rss_p90,
             phi_gate_keep_ratio=phi_gate_keep_ratio,
+            phi_gate_threshold=phi_gate_threshold,
             recon_mae_theta_corr=recon_mae_theta_corr,
             forward_consistency=forward_consistency,
             grad_norm_m3=grad_norm_m3,

@@ -201,6 +201,8 @@ def _stage1_loop(
                     metrics["decoder_recon_mae_4rss_p90"] = outputs.decoder_recon_mae_4rss_p90
                 if outputs.phi_gate_keep_ratio is not None:
                     metrics["phi_gate_keep_ratio"] = outputs.phi_gate_keep_ratio
+                if outputs.phi_gate_threshold is not None:
+                    metrics["phi_gate_threshold"] = outputs.phi_gate_threshold
                 if outputs.recon_mae_theta_corr is not None:
                     metrics["recon_mae_theta_corr"] = outputs.recon_mae_theta_corr
                 if outputs.forward_consistency is not None:
@@ -263,6 +265,9 @@ def _stage1_loop(
                     if outputs.phi_gate_keep_ratio is not None:
                         base_msg += " phi_keep=%.4f"
                         args_list.append(metrics["phi_gate_keep_ratio"])
+                    if outputs.phi_gate_threshold is not None:
+                        base_msg += " phi_thr=%.4f"
+                        args_list.append(metrics["phi_gate_threshold"])
                     if outputs.recon_mae_theta_corr is not None:
                         base_msg += " mae_theta_corr=%.4f"
                         args_list.append(metrics["recon_mae_theta_corr"])
@@ -375,6 +380,8 @@ def _stage25_loop(
                     metrics["decoder_recon_mae_4rss_p90"] = outputs.decoder_recon_mae_4rss_p90
                 if outputs.phi_gate_keep_ratio is not None:
                     metrics["phi_gate_keep_ratio"] = outputs.phi_gate_keep_ratio
+                if outputs.phi_gate_threshold is not None:
+                    metrics["phi_gate_threshold"] = outputs.phi_gate_threshold
                 if outputs.recon_mae_theta_corr is not None:
                     metrics["recon_mae_theta_corr"] = outputs.recon_mae_theta_corr
                 if outputs.forward_consistency is not None:
@@ -425,6 +432,9 @@ def _stage25_loop(
                     if outputs.phi_gate_keep_ratio is not None:
                         base_msg += " phi_keep=%.4f"
                         args_list.append(metrics.get("phi_gate_keep_ratio", 0.0))
+                    if outputs.phi_gate_threshold is not None:
+                        base_msg += " phi_thr=%.4f"
+                        args_list.append(metrics.get("phi_gate_threshold", 0.0))
                     if outputs.recon_mae_theta_corr is not None:
                         base_msg += " mae_theta_corr=%.4f"
                         args_list.append(metrics.get("recon_mae_theta_corr", 0.0))

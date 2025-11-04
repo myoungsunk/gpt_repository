@@ -53,6 +53,7 @@ class Stage25Outputs:
     decoder_recon_mae_4rss: Optional[float] = None
     decoder_recon_mae_4rss_p90: Optional[float] = None
     phi_gate_keep_ratio: Optional[float] = None
+    phi_gate_threshold: Optional[float] = None
     recon_mae_theta_corr: Optional[float] = None
     forward_consistency: Optional[float] = None
 
@@ -308,8 +309,8 @@ class Stage25Trainer:
             h5 = self.teacher["e5"](z5d)
             r4_hat = self.teacher["decoder"](h5, mu0)
             h4_hat = self.teacher["e4"](r4_hat)
-            mask = torch.zeros(z5d.size(0), 1, device=z5d.device)
-            h = self.teacher["fuse"](h5, h4_hat, mask)
+            ones_mask = torch.ones(z5d.size(0), 1, device=z5d.device)
+            h = self.teacher["fuse"](h5, h4_hat, ones_mask)
             phi = self.teacher["adapter"](h)
             mu1, kappa1, _ = self.teacher["m2"](z5d, phi.detach())
             mu1 = _ensure_two_dim(mu1)
@@ -321,6 +322,7 @@ class Stage25Trainer:
             "kappa1": kappa1.detach(),
             "phi": phi.detach(),
             "h": h.detach(),
+            "r4_hat": r4_hat.detach(),
         }
 
     def train_step(self, batch: Dict[str, torch.Tensor]) -> Stage25Outputs:
@@ -344,19 +346,22 @@ class Stage25Trainer:
         h4_hat_s = self.e4(r4_hat_s.detach())
         batch_size = z5d.size(0)
         ones_mask = torch.ones(batch_size, 1, device=self.device, dtype=h5_s.dtype)
+        teacher_out = self._teacher_forward(z5d)
         phi_gate_keep_ratio: Optional[float] = None
         decoder_mae_samples: Optional[torch.Tensor] = None
         decoder_recon_mae_4rss: Optional[float] = None
         decoder_recon_mae_4rss_p90: Optional[float] = None
         forward_consistency: Optional[float] = None
         recon_mae_theta_corr: Optional[float] = None
+        phi_gate_threshold: Optional[float] = None
         r4_gt = four_rss if four_rss.numel() == batch_size * 4 else None
         phi_gate = torch.ones(batch_size, 1, device=self.device, dtype=h5_s.dtype)
-        if r4_gt is not None:
-            decoder_mae_samples = torch.abs(r4_hat_s.detach() - r4_gt.detach()).mean(dim=-1)
+        reference_r4 = r4_gt if r4_gt is not None else teacher_out.get("r4_hat")
+        if reference_r4 is not None:
+            decoder_mae_samples = torch.abs(r4_hat_s.detach() - reference_r4.detach()).mean(dim=-1)
             decoder_recon_mae_4rss = decoder_mae_samples.mean().item()
             decoder_recon_mae_4rss_p90 = torch.quantile(decoder_mae_samples, 0.90).item()
-            gate_flat, phi_gate_keep_ratio, _ = compute_phi_gate(
+            gate_flat, phi_gate_keep_ratio, phi_gate_threshold = compute_phi_gate(
                 decoder_mae_samples,
                 enabled=self.cfg.train.phi_gate_enabled,
                 threshold=self.cfg.train.phi_gate_threshold,
@@ -370,12 +375,15 @@ class Stage25Trainer:
         phi_pass0 = self.adapter(h_pass0).detach()
         h_s = self.fuse(h5_s, h4_hat_s, phi_gate)
         phi_s = (self.adapter(h_s) * phi_gate).detach()
-        phi_gt = None
+        phi_ref = None
         if r4_gt is not None:
             h4_gt = self.e4(r4_gt.detach())
             h_gt = self.fuse(h5_s, h4_gt, ones_mask)
-            phi_gt = self.adapter(h_gt).detach()
-            forward_consistency = F.cosine_similarity(phi_pass0, phi_gt, dim=-1).mean().item()
+            phi_ref = self.adapter(h_gt).detach()
+        else:
+            phi_ref = teacher_out["phi"].detach()
+        if phi_ref is not None:
+            forward_consistency = F.cosine_similarity(phi_pass0, phi_ref, dim=-1).mean().item()
         mu1_s, kappa1_s, logits_s = self.m2(z5d, phi_s)
         mu1_s = _ensure_two_dim(mu1_s)
         kappa1_s = _ensure_two_dim(kappa1_s)
@@ -471,7 +479,6 @@ class Stage25Trainer:
             input_scale=self.cfg.data.input_scale,
             mix_variance_floor=self.mix_variance_floor,
         )
-        teacher_out = self._teacher_forward(z5d)
         gate = torch.sigmoid(teacher_out["kappa1"].mean(dim=-1, keepdim=True))
         gate = gate * phi_gate
         kd_losses = kd_loss_bundle(
@@ -610,6 +617,7 @@ class Stage25Trainer:
             decoder_recon_mae_4rss=decoder_recon_mae_4rss,
             decoder_recon_mae_4rss_p90=decoder_recon_mae_4rss_p90,
             phi_gate_keep_ratio=phi_gate_keep_ratio,
+            phi_gate_threshold=phi_gate_threshold,
             recon_mae_theta_corr=recon_mae_theta_corr,
             forward_consistency=forward_consistency,
         )
