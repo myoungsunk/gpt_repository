@@ -191,7 +191,15 @@ class Stage1Trainer:
             lr=cfg.train.learning_rate,
             weight_decay=cfg.train.weight_decay,
         )
+        # Store base lrs for scheduling
+        self._base_lrs = [g["lr"] for g in self.optimizer.param_groups]
+        self.use_cosine_lr = bool(cfg.train.use_cosine_lr)
+        self.lr_warmup_steps = max(0, int(cfg.train.lr_warmup_steps))
+        self.lr_min_ratio = float(max(0.0, min(1.0, cfg.train.lr_min_ratio)))
         self.global_step = 0
+        # Optionally freeze BatchNorm statistics (Stage-3 stability)
+        if cfg.train.freeze_batchnorm:
+            self._freeze_batchnorm()
         self._debug_stats_printed = False
         self.mix_warmup_steps = cfg.data.mix_warmup_steps
         self.mix_ramp_steps = cfg.data.mix_ramp_steps
@@ -377,6 +385,8 @@ class Stage1Trainer:
             logging.info("[Stage-1][debug] z5d stats mean=%.3f std=%.3f min=%.3f max=%.3f", *stats)
             self._debug_stats_printed = True
         self.optimizer.zero_grad()
+        # Update LR schedule per step
+        self._update_lrs()
         mu0, kappa0, _ = self.m2(z5d, None)
         mu0 = _ensure_two_dim(mu0)
         kappa0 = _ensure_two_dim(kappa0)
@@ -662,6 +672,9 @@ class Stage1Trainer:
         self.optimizer.step()
         self.global_step += 1
         deg_rmse = circular_mean_error_deg(mu_eval.detach(), theta_gt.detach()).item()
+        # Store last batch predictions for plotting (Stage-1 only)
+        self.last_theta_pred = mu_eval.detach().cpu()
+        self.last_theta_gt = theta_gt.detach().cpu()
         if decoder_mae_samples is not None:
             err = torch.atan2(torch.sin(mu_eval.detach() - theta_gt.detach()), torch.cos(mu_eval.detach() - theta_gt.detach()))
             err_deg = torch.rad2deg(err.abs()).mean(dim=-1)
@@ -780,6 +793,32 @@ class Stage1Trainer:
             return 0.0
         progress = min(1.0, (self.global_step - warmup) / ramp)
         return float(progress)
+
+    def _freeze_batchnorm(self) -> None:
+        for module in [self.e4, self.e5, self.fuse, self.adapter, self.decoder, self.m2, self.m3]:
+            if module is None:
+                continue
+            for m in module.modules():
+                if isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
+                    m.eval()
+                    for p in m.parameters():
+                        p.requires_grad = False
+
+    def _update_lrs(self) -> None:
+        if not self.use_cosine_lr:
+            return
+        # Step-based cosine schedule tied to mix schedule span
+        total_span = max(1, self.mix_warmup_steps + self.mix_ramp_steps)
+        step = self.global_step
+        if self.lr_warmup_steps > 0 and step < self.lr_warmup_steps:
+            factor = step / float(max(1, self.lr_warmup_steps))
+        else:
+            # Cosine from 1.0 -> lr_min_ratio over total_span
+            t = min(1.0, step / float(total_span))
+            cosine = 0.5 * (1 + math.cos(math.pi * t))
+            factor = self.lr_min_ratio + (1 - self.lr_min_ratio) * cosine
+        for (pg, base) in zip(self.optimizer.param_groups, self._base_lrs):
+            pg["lr"] = max(1e-8, float(base) * float(factor))
 
 
 __all__ = ["Stage1Trainer", "Stage1Outputs"]

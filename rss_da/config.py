@@ -25,11 +25,17 @@ class TrainConfig:
     num_workers: int = 4
     learning_rate: float = 1e-3
     weight_decay: float = 1e-4
+    # LR scheduling
+    use_cosine_lr: bool = True
+    lr_warmup_steps: int = 500
+    lr_min_ratio: float = 0.1
     loss_weights: List[float] = field(default_factory=_default_loss_weights)
     # w_sup, w_kd, w_mix, w_align, w_phys
     tau: float = 2.0  # KD temperature
     ema_decay: float = 0.99
     dropout_p: float = 0.1
+    # Normalization strategy
+    freeze_batchnorm: bool = True
     epochs: int = 50
     grad_clip: Optional[float] = 1.0
     use_m3: bool = False
@@ -75,6 +81,9 @@ class TrainConfig:
     phi_gate_threshold: Optional[float] = None
     phi_gate_quantile: Optional[float] = 0.6
     phi_gate_min_keep: float = 0.0
+    # Visualization / geometry (Stage-1 only)
+    array_spacing_d: float = 1.0  # antenna spacing for (x,z) mapping
+    make_plots: bool = True
 
 
 @dataclass

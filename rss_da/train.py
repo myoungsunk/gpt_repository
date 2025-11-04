@@ -12,6 +12,12 @@ from typing import Dict, Iterable, List, Optional, Tuple
 import numpy as np
 
 from torch.utils.data import DataLoader
+import numpy as np
+try:
+    import matplotlib.pyplot as plt
+    _HAVE_MPL = True
+except Exception:
+    _HAVE_MPL = False
 
 from rss_da.config import Config
 from rss_da.data.dataset import RssDoADataset, Sample, collate_samples, load_standardized_csv
@@ -497,6 +503,50 @@ def _stage25_loop(
                         best_path.as_posix(),
                         mean_deg,
                     )
+            # Generate plots at epoch end (Stage-1 only)
+            if cfg.train.make_plots and _HAVE_MPL:
+                try:
+                    plots_dir = (phase_dir / "plots")
+                    plots_dir.mkdir(parents=True, exist_ok=True)
+                    pred = getattr(trainer, "last_theta_pred", None)
+                    gt = getattr(trainer, "last_theta_gt", None)
+                    if pred is not None and gt is not None and pred.numel() > 0 and gt.numel() > 0:
+                        # Reduce to scalar angle per-sample by mean across last dim
+                        pred_rad = pred.mean(dim=-1).numpy()
+                        gt_rad = gt.mean(dim=-1).numpy()
+                        # Theta plot
+                        plt.figure(figsize=(5, 5))
+                        plt.scatter(np.rad2deg(gt_rad), np.rad2deg(pred_rad), s=6, alpha=0.6)
+                        plt.xlabel("theta_gt (deg)")
+                        plt.ylabel("theta_pred (deg)")
+                        plt.grid(True, alpha=0.3)
+                        plt.title(f"Theta scatter (epoch {epoch+1})")
+                        plt.tight_layout()
+                        plt.savefig((plots_dir / f"theta_scatter_epoch{epoch+1}.png").as_posix())
+                        plt.close()
+                        # Position plot using first component (theta1)
+                        d = float(cfg.train.array_spacing_d)
+                        theta1_pred = pred[:, 0].numpy()
+                        theta1_gt = gt[:, 0].numpy()
+                        x_pred = (d / 2.0) - d * np.sin(theta1_pred)
+                        z_pred = d * np.cos(theta1_pred)
+                        x_gt = (d / 2.0) - d * np.sin(theta1_gt)
+                        z_gt = d * np.cos(theta1_gt)
+                        rmse = float(np.sqrt(np.mean((x_pred - x_gt) ** 2 + (z_pred - z_gt) ** 2)))
+                        logging.info("[Stage-1] Position RMSE (epoch %d) = %.6f", epoch + 1, rmse)
+                        plt.figure(figsize=(5, 5))
+                        plt.scatter(x_gt, z_gt, s=6, alpha=0.6, label="gt")
+                        plt.scatter(x_pred, z_pred, s=6, alpha=0.6, label="pred")
+                        plt.xlabel("x")
+                        plt.ylabel("z")
+                        plt.legend()
+                        plt.grid(True, alpha=0.3)
+                        plt.title(f"Position scatter (epoch {epoch+1}) RMSE={rmse:.3f}")
+                        plt.tight_layout()
+                        plt.savefig((plots_dir / f"pos_scatter_epoch{epoch+1}.png").as_posix())
+                        plt.close()
+                except Exception as e:
+                    logging.warning("Plotting failed: %s", e)
         return trainer
     finally:
         logger.close()
@@ -505,7 +555,7 @@ def _stage25_loop(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="RSS DoA Stage-1/Stage-2.5 학습")
     parser.add_argument("--stage", choices=["1", "2.5"], default="1")
-    parser.add_argument("--phase", choices=["pretrain_m2", "finetune_m3"], default="pretrain_m2")
+    parser.add_argument("--phase", choices=["pretrain_m2", "finetune_m3", "sequential_full"], default="pretrain_m2")
     parser.add_argument("--data_root", type=str, default="./data")
     parser.add_argument("--stage1_file", type=str, default="stage1_rel.csv")
     parser.add_argument("--stage25_file", type=str, default="stage25_rel.csv")
@@ -564,6 +614,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--phi_gate_threshold", type=float, default=None)
     parser.add_argument("--phi_gate_quantile", type=float, default=None)
     parser.add_argument("--phi_gate_min_keep", type=float, default=None)
+    parser.add_argument("--array_spacing", type=float, default=None, help="Antenna spacing d for (x,z) mapping")
+    parser.add_argument("--no_plots", action="store_true", help="Disable saving matplotlib plots in Stage-1")
     parser.add_argument("--use_coral", action="store_true")
     parser.add_argument("--use_dann", action="store_true")
     parser.add_argument("--use_cdan", action="store_true")
@@ -571,6 +623,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--uncertainty", action="store_true")
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--dropout_p", type=float, default=None)
+    # LR scheduler controls
+    parser.add_argument("--lr_warmup_steps", type=int, default=None, help="Warmup steps for LR scheduler")
+    parser.add_argument("--lr_min_ratio", type=float, default=None, help="Final LR ratio for cosine schedule (0..1)")
     parser.add_argument("--logdir", type=str, default="./runs/demo")
     parser.add_argument("--load_m2_ckpt", type=str, default=None)
     parser.add_argument(
@@ -645,7 +701,7 @@ def main() -> None:
     cfg = Config()
     cfg.train.stage = args.stage
     cfg.train.phase = args.phase
-    cfg.train.use_m3 = args.enable_m3 or args.phase == "finetune_m3"
+    cfg.train.use_m3 = args.enable_m3 or args.phase == "finetune_m3" or args.phase == "sequential_full"
     cfg.train.use_coral = args.use_coral
     cfg.train.use_dann = args.use_dann
     cfg.train.use_cdan = args.use_cdan
@@ -654,6 +710,12 @@ def main() -> None:
     requested_epochs = max(1, int(args.epochs))
     cfg.train.epochs = requested_epochs
     cfg.train.batch_size = args.batch_size
+    if args.dropout_p is not None:
+        cfg.train.dropout_p = max(0.0, min(0.9, args.dropout_p))
+    if args.lr_warmup_steps is not None:
+        cfg.train.lr_warmup_steps = max(0, int(args.lr_warmup_steps))
+    if args.lr_min_ratio is not None:
+        cfg.train.lr_min_ratio = float(max(0.0, min(1.0, args.lr_min_ratio)))
     cfg.train.log_dir = args.logdir
     if args.m3_preset != "none":
         _apply_m3_preset(cfg, args.m3_preset)
@@ -718,6 +780,11 @@ def main() -> None:
         cfg.train.phi_gate_quantile = args.phi_gate_quantile
     if args.phi_gate_min_keep is not None:
         cfg.train.phi_gate_min_keep = max(0.0, min(1.0, args.phi_gate_min_keep))
+    if args.array_spacing is not None:
+        cfg.train.array_spacing_d = float(args.array_spacing)
+    if args.no_plots:
+        cfg.train.make_plots = False
+    # LR scheduler flags (optional future CLI; keep defaults for now)
     if cfg.train.epochs != requested_epochs:
         logging.warning(
             "TrainConfig epochs mutated from %d to %d after CLI overrides; forcing requested value",
@@ -745,16 +812,45 @@ def main() -> None:
     stage25_file = args.stage25_file
     load_path = Path(args.load_m2_ckpt) if args.load_m2_ckpt else None
     if args.stage == "1":
-        logging.info("Starting Stage-1 training for %d epochs", cfg.train.epochs)
-        _stage1_loop(
-            cfg,
-            cfg.train.epochs,
-            log_dir,
-            data_root,
-            stage1_file,
-            stage25_file,
-            load_path=load_path,
-        )
+        if args.phase != "sequential_full":
+            logging.info("Starting Stage-1 training for %d epochs", cfg.train.epochs)
+            _stage1_loop(
+                cfg,
+                cfg.train.epochs,
+                log_dir,
+                data_root,
+                stage1_file,
+                stage25_file,
+                load_path=load_path,
+            )
+        else:
+            # 3-step sequential: (1) pretrain_m2 -> (2) finetune_m3 (freeze m2) -> (3) joint finetune (unfreeze m2)
+            total_epochs = max(3, int(cfg.train.epochs))
+            e1 = max(1, total_epochs // 3)
+            e2 = max(1, total_epochs // 3)
+            e3 = max(1, total_epochs - e1 - e2)
+            # Step 1: M2 pretrain
+            cfg1 = deepcopy(cfg)
+            cfg1.train.phase = "pretrain_m2"
+            cfg1.train.use_m3 = False
+            logging.info("[Seq] Step1 pretrain_m2: %d epochs", e1)
+            trainer1 = _stage1_loop(cfg1, e1, log_dir / "seq_step1_m2", data_root, stage1_file, stage25_file, load_path=load_path)
+            # Step 2: M3 finetune with m2 frozen
+            best_m2_path = (log_dir / "seq_step1_m2" / ("phaseA" if cfg1.train.phase == "pretrain_m2" else "phaseB") / "best_m2.pth")
+            cfg2 = deepcopy(cfg)
+            cfg2.train.phase = "finetune_m3"
+            cfg2.train.use_m3 = True
+            cfg2.train.m3_freeze_m2 = True
+            logging.info("[Seq] Step2 finetune_m3 (freeze m2): %d epochs", e2)
+            trainer2 = _stage1_loop(cfg2, e2, log_dir / "seq_step2_m3", data_root, stage1_file, stage25_file, load_path=best_m2_path)
+            # Step 3: joint finetune (unfreeze m2)
+            best_m3_path = (log_dir / "seq_step2_m3" / "phaseB" / "best_m3.pth")
+            cfg3 = deepcopy(cfg)
+            cfg3.train.phase = "finetune_m3"
+            cfg3.train.use_m3 = True
+            cfg3.train.m3_freeze_m2 = False
+            logging.info("[Seq] Step3 joint finetune (unfreeze m2): %d epochs", e3)
+            _stage1_loop(cfg3, e3, log_dir / "seq_step3_joint", data_root, stage1_file, stage25_file, load_path=best_m3_path)
     else:
         logging.info("Preparing Stage-1 teacher for Stage-2.5 training")
         teacher_cfg = deepcopy(cfg)

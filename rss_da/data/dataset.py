@@ -191,6 +191,11 @@ def load_standardized_csv(
             "sum_rel_db": sum_rel,
             "log_ratio": log_ratio,
         }
+        if "room_dim_meter" in df.columns and pd.notna(row.get("room_dim_meter")):
+            try:
+                z5d_named["room_dim_meter"] = float(row.get("room_dim_meter"))
+            except Exception:
+                pass
 
         mask = float(row.get("mask_4rss_is_gt", 0.0))
         theta = [float(row["theta1_rad"]), float(row["theta2_rad"])]
