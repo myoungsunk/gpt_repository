@@ -545,6 +545,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--m3_lambda_keep_target", type=float, default=None)
     parser.add_argument("--m3_gate_keep_threshold", "--m3_gate_threshold", type=float, default=None)
     parser.add_argument("--m3_gate_tau", "--m3_gate_temp", type=float, default=None)
+    parser.add_argument("--m3_tau_end", type=float, default=None, help="Final gate temperature for M3 schedule")
+    parser.add_argument("--m3_tau_ramp_steps", type=int, default=None, help="Steps to linearly ramp M3 gate temperature from --m3_gate_tau to --m3_tau_end")
+    parser.add_argument("--m3_grad_clip", type=float, default=None, help="Max grad-norm clip for M3 module only")
     parser.add_argument("--m3_detach_m2", dest="m3_detach_m2", action="store_true", default=None)
     parser.add_argument("--no_m3_detach_m2", dest="m3_detach_m2", action="store_false")
     parser.set_defaults(m3_detach_m2=None)
@@ -689,6 +692,12 @@ def main() -> None:
         cfg.train.m3_gate_keep_threshold = args.m3_gate_keep_threshold
     if args.m3_gate_tau is not None:
         cfg.train.m3_gate_tau = args.m3_gate_tau
+    if args.m3_tau_end is not None:
+        cfg.train.m3_tau_end = args.m3_tau_end
+    if args.m3_tau_ramp_steps is not None:
+        cfg.train.m3_tau_ramp_steps = max(0, args.m3_tau_ramp_steps)
+    if args.m3_grad_clip is not None:
+        cfg.train.m3_grad_clip = max(0.0, args.m3_grad_clip)
     if args.m3_keep_warmup_epochs is not None:
         cfg.train.m3_keep_warmup_epochs = args.m3_keep_warmup_epochs
     if args.m3_target_keep_start is not None:

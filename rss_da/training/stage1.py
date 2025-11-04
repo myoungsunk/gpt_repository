@@ -148,16 +148,15 @@ class Stage1Trainer:
         self.m3_apply_eval_only = cfg.train.m3_apply_eval_only
         self.m3_freeze_m2 = cfg.train.m3_freeze_m2 or (self.phase == "finetune_m3")
         self.m3_gate_tau = cfg.train.m3_gate_tau
+        self.m3_tau_end = getattr(cfg.train, "m3_tau_end", self.m3_gate_tau)
+        self.m3_tau_ramp_steps = max(0, getattr(cfg.train, "m3_tau_ramp_steps", 0))
+        self.m3_grad_clip = getattr(cfg.train, "m3_grad_clip", None)
         # EMA states for correlations and phi-gate EWM stats
         self._ema_alpha = 0.9
         self._kappa_corr_ema: Optional[float] = None
         self._phi_corr_ema: Optional[float] = None
         self._phi_ewm_mu: Optional[float] = None
         self._phi_ewm_var: Optional[float] = None
-        # EMA states for correlations
-        self._ema_alpha = 0.9
-        self._kappa_corr_ema: Optional[float] = None
-        self._phi_corr_ema: Optional[float] = None
         base_params = list(
             chain(
                 self.e4.parameters(),
@@ -209,6 +208,9 @@ class Stage1Trainer:
         self.m3_lambda_keep = cfg.train.m3_lambda_keep_target
         self.m3_gate_keep_threshold = cfg.train.m3_gate_keep_threshold
         self.m3_quantile_keep = cfg.train.m3_quantile_keep
+        # Optional quantile warmup and minimum keep enforcement for M3
+        self.m3_quantile_warmup_steps = getattr(cfg.train, "m3_quantile_warmup_steps", 0)
+        self.m3_min_keep = getattr(cfg.train, "m3_min_keep", 0.0)
         keep_steps = int(total_span * cfg.train.m3_keep_warmup_epochs / self.total_epochs)
         self.m3_keep_schedule_steps = max(1, keep_steps if keep_steps > 0 else self.m3_warmup_steps)
         self.m3_target_keep_start = cfg.train.m3_target_keep_start
@@ -226,15 +228,26 @@ class Stage1Trainer:
                 self.m3_gain_ramp_steps,
             )
             logging.info(
-                "[Stage-1][M3] controls: gate_mode=%s gate_tau=%.2f keep_threshold=%.3f quantile_keep=%s gain_start=%.3f gain_end=%.3f delta_max_deg=%.2f",
+                "[Stage-1][M3] controls: gate_mode=%s gate_tau=%.2f->%.2f ramp_steps=%d keep_threshold=%.3f quantile_keep=%s gain_start=%.3f gain_end=%.3f delta_max_deg=%.2f",
                 cfg.train.m3_gate_mode,
                 self.m3_gate_tau,
+                self.m3_tau_end,
+                self.m3_tau_ramp_steps,
                 self.m3_gate_keep_threshold,
                 quantile_str,
                 self.m3_gain_start,
                 self.m3_gain_end,
                 cfg.train.m3_delta_max_deg,
             )
+
+    def _m3_tau(self) -> float:
+        start = float(self.m3_gate_tau)
+        end = float(self.m3_tau_end)
+        steps = float(max(1, self.m3_tau_ramp_steps))
+        if self.m3_tau_ramp_steps <= 0:
+            return start
+        t = min(1.0, max(0.0, self.global_step / steps))
+        return float(start + (end - start) * t)
 
     def train(self, mode: bool = True) -> None:
         self.e4.train(mode)
@@ -473,6 +486,8 @@ class Stage1Trainer:
                 mu_in = mu1.detach() if detach_inputs else mu1
                 kappa_in = kappa1.detach() if detach_inputs else kappa1
                 mu_pre = mu1.detach()
+                # Update M3 gate temperature by schedule before forward
+                self.m3.gate_tau = float(self._m3_tau())
                 m3_out = self.m3(
                     features_in,
                     mu_in,
@@ -491,10 +506,23 @@ class Stage1Trainer:
                 keep_mask_bool = m3_out["keep_mask"]
                 threshold_used = float(self.m3_gate_keep_threshold)
                 if self.m3_quantile_keep is not None and gate.numel() > 0:
-                    q = float(min(max(self.m3_quantile_keep, 0.0), 1.0))
-                    quantile_value = torch.quantile(gate.detach(), q)
-                    threshold_used = quantile_value.item()
-                    keep_mask_bool = gate >= quantile_value
+                    spread = (torch.quantile(gate.detach(), 0.90) - torch.quantile(gate.detach(), 0.10)).item()
+                    if self.global_step < max(0, self.m3_quantile_warmup_steps) or spread < 1e-3:
+                        keep_mask_bool = torch.ones_like(gate, dtype=torch.bool)
+                        threshold_used = 0.0
+                    else:
+                        q = float(min(max(self.m3_quantile_keep, 0.0), 1.0))
+                        quantile_value = torch.quantile(gate.detach(), q)
+                        threshold_used = quantile_value.item()
+                        keep_mask_bool = gate >= quantile_value
+                    # Enforce minimum keep ratio
+                    if self.m3_min_keep > 0.0:
+                        keep_mean_now = keep_mask_bool.float().mean().item()
+                        if keep_mean_now < self.m3_min_keep:
+                            k = max(1, int(math.ceil(self.m3_min_keep * gate.numel())))
+                            thr_relax = torch.topk(gate.flatten(), k, largest=True).values.min()
+                            keep_mask_bool = gate >= thr_relax
+                            threshold_used = float(thr_relax.item())
                 clip_mask = keep_mask_bool & (delta_raw.abs() >= max(0.0, delta_cap - 1e-6))
                 keep_mask = keep_mask_bool.float()
                 m3_resid_penalty = (delta_effect.pow(2).mean() * self.m3_lambda_resid)
@@ -576,7 +604,7 @@ class Stage1Trainer:
                         "gate_entropy": gate_entropy.detach().item(),
                         "delta_cap_deg": math.degrees(delta_cap),
                         "gain": gain,
-                        "gate_tau": self.m3_gate_tau,
+                        "gate_tau": float(self._m3_tau()),
                         "resid_dir_agree_rate": direction_agree_rate,
                         "improve_rate_1deg": improve_rate,
                         "worsen_rate_1deg": worsen_rate,
@@ -605,6 +633,9 @@ class Stage1Trainer:
             + m3_gate_penalty
         )
         loss_total.backward()
+        # Optional targeted clipping for M3 only
+        if self.m3 is not None and getattr(self, "m3_grad_clip", None) not in (None, 0.0):
+            torch.nn.utils.clip_grad_norm_(self.m3.parameters(), max_norm=float(self.m3_grad_clip))
         grad_norm_m3: Optional[float] = None
         if self.m3 is not None:
             total_sq = 0.0

@@ -64,6 +64,10 @@ class TrainConfig:
     m3_target_keep_end: float = 0.6
     m3_keep_warmup_epochs: int = 5
     m3_gate_tau: float = 1.0
+    # Gate temperature schedule and clipping
+    m3_tau_end: float = 1.0
+    m3_tau_ramp_steps: int = 0
+    m3_grad_clip: Optional[float] = None
     m3_quantile_keep: Optional[float] = None
     m3_quantile_warmup_steps: int = 0
     m3_min_keep: float = 0.0
