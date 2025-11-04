@@ -503,18 +503,37 @@ def _stage25_loop(
                         best_path.as_posix(),
                         mean_deg,
                     )
-            # Generate plots at epoch end (Stage-1 only)
-            if cfg.train.make_plots and _HAVE_MPL:
-                try:
-                    plots_dir = (phase_dir / "plots")
-                    plots_dir.mkdir(parents=True, exist_ok=True)
-                    pred = getattr(trainer, "last_theta_pred", None)
-                    gt = getattr(trainer, "last_theta_gt", None)
-                    if pred is not None and gt is not None and pred.numel() > 0 and gt.numel() > 0:
-                        # Reduce to scalar angle per-sample by mean across last dim
+            # Compute per-epoch position RMSE; save plots if available
+            try:
+                pred = getattr(trainer, "last_theta_pred", None)
+                gt = getattr(trainer, "last_theta_gt", None)
+                if pred is not None and gt is not None and pred.numel() > 0 and gt.numel() > 0:
+                    # Per-sample d vector from batch if available; else fallback to constant
+                    room_dim_vec = getattr(trainer, "last_room_dim", None)
+                    if room_dim_vec is not None and getattr(room_dim_vec, "numel", None) and room_dim_vec.numel() == pred.shape[0]:
+                        d_vec = room_dim_vec.numpy().astype(np.float32)
+                    else:
+                        d_vec = np.full((pred.shape[0],), float(cfg.train.array_spacing_d), dtype=np.float32)
+                    t1_pred = pred[:, 0].numpy()
+                    t2_pred = pred[:, 1].numpy()
+                    t1_gt = gt[:, 0].numpy()
+                    t2_gt = gt[:, 1].numpy()
+                    def pos_from_angles(t1, t2, d):
+                        denom = np.tan(t1) * np.cos(t2) + np.sin(t2)
+                        denom = denom + 1e-8
+                        x = -d / 2.0 - d * np.sin(t2) / denom
+                        z = d * np.cos(t2) / denom
+                        return x, z
+                    x_pred, z_pred = pos_from_angles(t1_pred, t2_pred, d_vec)
+                    x_gt, z_gt = pos_from_angles(t1_gt, t2_gt, d_vec)
+                    pos_rmse = float(np.sqrt(np.mean((x_pred - x_gt) ** 2 + (z_pred - z_gt) ** 2)))
+                    logging.info("[Stage-1] Position RMSE (epoch %d) = %.6f", epoch + 1, pos_rmse)
+                    if cfg.train.make_plots and _HAVE_MPL:
+                        plots_dir = (phase_dir / "plots")
+                        plots_dir.mkdir(parents=True, exist_ok=True)
+                        # Theta scatter using mean of both components for visualization
                         pred_rad = pred.mean(dim=-1).numpy()
                         gt_rad = gt.mean(dim=-1).numpy()
-                        # Theta plot
                         plt.figure(figsize=(5, 5))
                         plt.scatter(np.rad2deg(gt_rad), np.rad2deg(pred_rad), s=6, alpha=0.6)
                         plt.xlabel("theta_gt (deg)")
@@ -524,16 +543,7 @@ def _stage25_loop(
                         plt.tight_layout()
                         plt.savefig((plots_dir / f"theta_scatter_epoch{epoch+1}.png").as_posix())
                         plt.close()
-                        # Position plot using first component (theta1)
-                        d = float(cfg.train.array_spacing_d)
-                        theta1_pred = pred[:, 0].numpy()
-                        theta1_gt = gt[:, 0].numpy()
-                        x_pred = (d / 2.0) - d * np.sin(theta1_pred)
-                        z_pred = d * np.cos(theta1_pred)
-                        x_gt = (d / 2.0) - d * np.sin(theta1_gt)
-                        z_gt = d * np.cos(theta1_gt)
-                        rmse = float(np.sqrt(np.mean((x_pred - x_gt) ** 2 + (z_pred - z_gt) ** 2)))
-                        logging.info("[Stage-1] Position RMSE (epoch %d) = %.6f", epoch + 1, rmse)
+                        # Position scatter
                         plt.figure(figsize=(5, 5))
                         plt.scatter(x_gt, z_gt, s=6, alpha=0.6, label="gt")
                         plt.scatter(x_pred, z_pred, s=6, alpha=0.6, label="pred")
@@ -541,12 +551,12 @@ def _stage25_loop(
                         plt.ylabel("z")
                         plt.legend()
                         plt.grid(True, alpha=0.3)
-                        plt.title(f"Position scatter (epoch {epoch+1}) RMSE={rmse:.3f}")
+                        plt.title(f"Position scatter (epoch {epoch+1}) RMSE={pos_rmse:.3f}")
                         plt.tight_layout()
                         plt.savefig((plots_dir / f"pos_scatter_epoch{epoch+1}.png").as_posix())
                         plt.close()
-                except Exception as e:
-                    logging.warning("Plotting failed: %s", e)
+            except Exception as e:
+                logging.warning("Plot/RMSE computation failed: %s", e)
         return trainer
     finally:
         logger.close()

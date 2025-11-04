@@ -672,9 +672,15 @@ class Stage1Trainer:
         self.optimizer.step()
         self.global_step += 1
         deg_rmse = circular_mean_error_deg(mu_eval.detach(), theta_gt.detach()).item()
-        # Store last batch predictions for plotting (Stage-1 only)
+        # Store last batch predictions/room_dim for plotting (Stage-1 only)
         self.last_theta_pred = mu_eval.detach().cpu()
         self.last_theta_gt = theta_gt.detach().cpu()
+        try:
+            z5d_named_batch = batch.get("z5d_named")
+            if isinstance(z5d_named_batch, dict) and ("room_dim_meter" in z5d_named_batch):
+                self.last_room_dim = z5d_named_batch["room_dim_meter"].detach().cpu()
+        except Exception:
+            pass
         if decoder_mae_samples is not None:
             err = torch.atan2(torch.sin(mu_eval.detach() - theta_gt.detach()), torch.cos(mu_eval.detach() - theta_gt.detach()))
             err_deg = torch.rad2deg(err.abs()).mean(dim=-1)
