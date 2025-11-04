@@ -1,4 +1,4 @@
-"""Stage-1 학습 루프."""
+﻿"""Stage-1 """
 from __future__ import annotations
 
 import logging
@@ -27,7 +27,7 @@ from rss_da.utils.phi_gate import compute_phi_gate
 class Stage1Outputs:
 
 
-    """단일 스텝 결과."""
+    """??�� ??�� ����."""
     loss_total: float
     sup0_nll: float
     sup1_nll: float
@@ -62,21 +62,52 @@ class Stage1Outputs:
     phi_quality_improve_corr: Optional[float] = None
     decoder_recon_mae_4rss: Optional[float] = None
     decoder_recon_mae_4rss_p90: Optional[float] = None
+    decoder_recon_mae_4rss_std: Optional[float] = None
+    decoder_recon_mae_4rss_min: Optional[float] = None
+    decoder_recon_mae_4rss_max: Optional[float] = None
+    decoder_recon_mae_4rss_std: Optional[float] = None
+    decoder_recon_mae_4rss_min: Optional[float] = None
+    decoder_recon_mae_4rss_max: Optional[float] = None
     phi_gate_keep_ratio: Optional[float] = None
     phi_gate_threshold: Optional[float] = None
+    # phi-gate distribution stats
+    phi_gate_mean: Optional[float] = None
+    phi_gate_std: Optional[float] = None
+    phi_gate_p25: Optional[float] = None
+    phi_gate_p75: Optional[float] = None
+    phi_gate_quantile_disabled: Optional[bool] = None
+    phi_gate_ramp: Optional[float] = None
     recon_mae_theta_corr: Optional[float] = None
     forward_consistency: Optional[float] = None
     grad_norm_m3: Optional[float] = None
+    grad_m3_spike_rate: Optional[float] = None
+    grad_m3_spike_rate: Optional[float] = None
+    # M3 gate distribution stats
+    m3_gate_std: Optional[float] = None
+    m3_gate_p25: Optional[float] = None
+    m3_gate_p75: Optional[float] = None
+    m3_quantile_disabled: Optional[bool] = None
+    m3_ramp: Optional[float] = None
+    # Residual distribution tails
+    m3_resid_abs_p99_deg: Optional[float] = None
+    # Correlation EMA (stability)
+    kappa_corr_ema: Optional[float] = None
+    phi_corr_ema: Optional[float] = None
+    # Residual distribution tails
+    m3_resid_abs_p99_deg: Optional[float] = None
+    # Correlation EMA (stability)
+    kappa_corr_ema: Optional[float] = None
+    phi_corr_ema: Optional[float] = None
 
 
 def _ensure_two_dim(tensor: torch.Tensor) -> torch.Tensor:
-    """혼합 모델 대응."""
+    """??�� ���� ????"""
     if tensor.ndim == 3:
         return tensor[:, 0, :]
     return tensor
 
 class Stage1Trainer:
-    """Stage-1 학습기."""
+    """Stage-1 ??��??"""
     def __init__(self, cfg: Config, device: Optional[torch.device] = None) -> None:
         self.cfg = cfg
         self.phase = cfg.train.phase
@@ -117,6 +148,16 @@ class Stage1Trainer:
         self.m3_apply_eval_only = cfg.train.m3_apply_eval_only
         self.m3_freeze_m2 = cfg.train.m3_freeze_m2 or (self.phase == "finetune_m3")
         self.m3_gate_tau = cfg.train.m3_gate_tau
+        # EMA states for correlations and phi-gate EWM stats
+        self._ema_alpha = 0.9
+        self._kappa_corr_ema: Optional[float] = None
+        self._phi_corr_ema: Optional[float] = None
+        self._phi_ewm_mu: Optional[float] = None
+        self._phi_ewm_var: Optional[float] = None
+        # EMA states for correlations
+        self._ema_alpha = 0.9
+        self._kappa_corr_ema: Optional[float] = None
+        self._phi_corr_ema: Optional[float] = None
         base_params = list(
             chain(
                 self.e4.parameters(),
@@ -300,19 +341,19 @@ class Stage1Trainer:
         return ramp, effective_delta, gain, keep_target
 
     def train_step(self, batch: Dict[str, torch.Tensor], enable_pass1: bool = True) -> Stage1Outputs:
-        """단일 미니배치 학습."""
+        """??�� �̴Ϲ�ġ ??��."""
 
         self.train(True)
         batch = self._prepare_batch(batch)
         z5d = batch["z5d"]  # torch.FloatTensor[B,5]
         theta_gt = batch["theta_gt"]  # torch.FloatTensor[B,2]
-        c_meas = batch["c_meas"]  # torch.FloatTensor[B,2] 상대 dB
+        c_meas = batch["c_meas"]  # torch.FloatTensor[B,2] ???? dB
         if self.cfg.data.input_scale != "relative_db" and "c_meas_abs" in batch:
             c_meas = batch["c_meas_abs"]
         c_meas_rel = batch.get("c_meas_rel")
         if c_meas_rel is not None and c_meas_rel.numel() == 0:
             c_meas_rel = None
-        four_rss = batch["four_rss"]  # torch.FloatTensor[B,4] 또는 [B,0]
+        four_rss = batch["four_rss"]  # torch.FloatTensor[B,4] ??�� [B,0]
         if not self._debug_stats_printed:
             stats = (
                 z5d.mean().item(),
@@ -347,6 +388,12 @@ class Stage1Trainer:
         decoder_mae_samples: Optional[torch.Tensor] = None
         phi_gate_keep_ratio: Optional[float] = None
         phi_gate_threshold: Optional[float] = None
+        phi_gate_mean: Optional[float] = None
+        phi_gate_std: Optional[float] = None
+        phi_gate_p25: Optional[float] = None
+        phi_gate_p75: Optional[float] = None
+        phi_gate_quantile_disabled: Optional[bool] = None
+        phi_gate_ramp: Optional[float] = None
         forward_consistency: Optional[float] = None
         recon_mae_theta_corr: Optional[float] = None
         if enable_pass1:
@@ -361,14 +408,43 @@ class Stage1Trainer:
                 decoder_mae_samples = torch.abs(r4_hat.detach() - r4_gt.detach()).mean(dim=-1)
                 decoder_recon_mae_4rss = decoder_mae_samples.mean().item()
                 decoder_recon_mae_4rss_p90 = torch.quantile(decoder_mae_samples, 0.90).item()
-                gate_flat, phi_gate_keep_ratio, phi_gate_threshold = compute_phi_gate(
-                    decoder_mae_samples,
+                decoder_recon_mae_4rss_std = decoder_mae_samples.std(unbiased=False).item() if decoder_mae_samples.numel() > 1 else 0.0
+                decoder_recon_mae_4rss_min = decoder_mae_samples.min().item()
+                decoder_recon_mae_4rss_max = decoder_mae_samples.max().item()
+                # EWM standardization so absolute threshold is interpreted as alpha in z-units
+                ramp_val = self._phi_gate_ramp()
+                if self._phi_ewm_mu is None:
+                    self._phi_ewm_mu = float(decoder_recon_mae_4rss)
+                    self._phi_ewm_var = float(max(1e-6, decoder_recon_mae_4rss_std ** 2))
+                else:
+                    mu = self._phi_ewm_mu
+                    var = self._phi_ewm_var
+                    mu_new = self._ema_alpha * mu + (1.0 - self._ema_alpha) * float(decoder_recon_mae_4rss)
+                    diff = float(decoder_recon_mae_4rss) - mu
+                    var_new = self._ema_alpha * var + (1.0 - self._ema_alpha) * (diff * diff)
+                    self._phi_ewm_mu = mu_new
+                    self._phi_ewm_var = max(1e-9, var_new)
+                mu_ewm = torch.as_tensor(self._phi_ewm_mu, dtype=decoder_mae_samples.dtype, device=decoder_mae_samples.device)
+                std_ewm = torch.sqrt(torch.as_tensor(self._phi_ewm_var, dtype=decoder_mae_samples.dtype, device=decoder_mae_samples.device))
+                z_scores = (decoder_mae_samples - mu_ewm) / (std_ewm + 1e-6)
+                thr_alpha = self.cfg.train.phi_gate_threshold if self.cfg.train.phi_gate_threshold is not None else None
+                use_quantile = thr_alpha is None
+                scores = decoder_mae_samples if use_quantile else z_scores
+                gate_flat, phi_gate_keep_ratio, phi_gate_threshold, phi_stats = compute_phi_gate(
+                    scores,
                     enabled=self.cfg.train.phi_gate_enabled,
-                    threshold=self.cfg.train.phi_gate_threshold,
+                    threshold=thr_alpha,
                     quantile=self.cfg.train.phi_gate_quantile,
                     min_keep=self.cfg.train.phi_gate_min_keep,
+                    ramp=ramp_val,
                 )
                 phi_gate = gate_flat.unsqueeze(-1).to(dtype=h5.dtype)
+                phi_gate_mean = float(phi_stats.get("gate_mean", 0.0))
+                phi_gate_std = float(phi_stats.get("gate_std", 0.0))
+                phi_gate_p25 = float(phi_stats.get("gate_p25", 0.0))
+                phi_gate_p75 = float(phi_stats.get("gate_p75", 0.0))
+                phi_gate_quantile_disabled = bool(phi_stats.get("quantile_disabled", False))
+                phi_gate_ramp = float(phi_stats.get("ramp", 0.0))
             elif self.cfg.train.phi_gate_enabled:
                 phi_gate_keep_ratio = 1.0
             h_pass0 = self.fuse(h5, h4_hat, ones_mask)
@@ -442,10 +518,14 @@ class Stage1Trainer:
                     gate_mean = gate.mean().item()
                     gate_p10 = torch.quantile(gate, 0.10).item()
                     gate_p90 = torch.quantile(gate, 0.90).item()
+                    gate_std = gate.std(unbiased=False).item() if gate.numel() > 1 else 0.0
+                    gate_p25 = torch.quantile(gate, 0.25).item()
+                    gate_p75 = torch.quantile(gate, 0.75).item()
                     keep_ratio = keep_mask.mean().item()
                     resid_abs_deg = torch.rad2deg(delta_effect.abs())
                     resid_mean_deg = resid_abs_deg.mean().item()
                     resid_p90_deg = torch.quantile(resid_abs_deg, 0.90).item()
+                    resid_p99_deg = torch.quantile(resid_abs_deg, 0.99).item()
                     clip_rate = (clip_mask & (keep_mask.bool())).float().mean().item()
                     err_pre = torch.atan2(torch.sin(mu_pre - theta_gt), torch.cos(mu_pre - theta_gt))
                     err_post = torch.atan2(torch.sin(mu_eval - theta_gt), torch.cos(mu_eval - theta_gt))
@@ -463,14 +543,31 @@ class Stage1Trainer:
                     if decoder_mae_samples is not None and decoder_mae_samples.numel() == improvement.numel():
                         phi_quality = 1.0 / (1.0 + decoder_mae_samples.detach())
                         phi_corr = self._spearman_corr(phi_quality, improvement.detach())
+                    # EMA updates for correlations
+                    if kappa_corr is not None:
+                        if self._kappa_corr_ema is None:
+                            self._kappa_corr_ema = float(kappa_corr)
+                        else:
+                            self._kappa_corr_ema = float(self._ema_alpha * self._kappa_corr_ema + (1.0 - self._ema_alpha) * float(kappa_corr))
+                    if phi_corr is not None:
+                        if self._phi_corr_ema is None:
+                            self._phi_corr_ema = float(phi_corr)
+                        else:
+                            self._phi_corr_ema = float(self._ema_alpha * self._phi_corr_ema + (1.0 - self._ema_alpha) * float(phi_corr))
                     m3_stats = {
                         "enabled": 1.0,
                         "gate_mean": gate_mean,
                         "gate_p10": gate_p10,
                         "gate_p90": gate_p90,
+                        "gate_std": gate_std,
+                        "gate_p25": gate_p25,
+                        "gate_p75": gate_p75,
+                        "quantile_disabled": bool(gate_std < 0.05 or ramp < 0.1),
+                        "ramp": float(ramp),
                         "keep_ratio": keep_ratio,
                         "resid_mean_deg": resid_mean_deg,
                         "resid_p90_deg": resid_p90_deg,
+                        "resid_p99_deg": resid_p99_deg,
                         "clip_rate": clip_rate,
                         "kappa_corr": kappa_corr,
                         "resid_penalty": m3_resid_penalty.detach().item(),
@@ -544,6 +641,11 @@ class Stage1Trainer:
                 "gate_mean": 0.0,
                 "gate_p10": 0.0,
                 "gate_p90": 0.0,
+                "gate_std": 0.0,
+                "gate_p25": 0.0,
+                "gate_p75": 0.0,
+                "quantile_disabled": False,
+                "ramp": 0.0,
                 "keep_ratio": 0.0,
                 "resid_mean_deg": 0.0,
                 "resid_p90_deg": 0.0,
@@ -599,14 +701,25 @@ class Stage1Trainer:
             decoder_recon_mae_4rss_p90=decoder_recon_mae_4rss_p90,
             phi_gate_keep_ratio=phi_gate_keep_ratio,
             phi_gate_threshold=phi_gate_threshold,
+            phi_gate_mean=phi_gate_mean,
+            phi_gate_std=phi_gate_std,
+            phi_gate_p25=phi_gate_p25,
+            phi_gate_p75=phi_gate_p75,
+            phi_gate_quantile_disabled=phi_gate_quantile_disabled,
+            phi_gate_ramp=phi_gate_ramp,
             recon_mae_theta_corr=recon_mae_theta_corr,
             forward_consistency=forward_consistency,
             grad_norm_m3=grad_norm_m3,
+            m3_gate_std=m3_stats["gate_std"] if m3_stats is not None else None,
+            m3_gate_p25=m3_stats["gate_p25"] if m3_stats is not None else None,
+            m3_gate_p75=m3_stats["gate_p75"] if m3_stats is not None else None,
+            m3_quantile_disabled=m3_stats["quantile_disabled"] if m3_stats is not None else None,
+            m3_ramp=m3_stats["ramp"] if m3_stats is not None else None,
         )
         return result
 
     def modules(self) -> Dict[str, nn.Module]:
-        """모듈 접근."""
+        """���� ??��."""
 
         modules: Dict[str, nn.Module] = {
             "e4": self.e4,
@@ -627,6 +740,15 @@ class Stage1Trainer:
             return 0.0
         progress = min(1.0, (self.global_step - warmup) / ramp)
         return progress * self.mix_weight_cap
+
+    def _phi_gate_ramp(self) -> float:
+        """Ramp for phi-gate tied to mixing schedule (0..1)."""
+        warmup = self.mix_warmup_steps
+        ramp = max(1, self.mix_ramp_steps)
+        if self.global_step < warmup:
+            return 0.0
+        progress = min(1.0, (self.global_step - warmup) / ramp)
+        return float(progress)
 
 
 __all__ = ["Stage1Trainer", "Stage1Outputs"]

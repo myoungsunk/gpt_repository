@@ -203,6 +203,12 @@ def _stage1_loop(
                     metrics["phi_gate_keep_ratio"] = outputs.phi_gate_keep_ratio
                 if outputs.phi_gate_threshold is not None:
                     metrics["phi_gate_threshold"] = outputs.phi_gate_threshold
+                if getattr(outputs, "phi_gate_mean", None) is not None:
+                    metrics["phi_gate_mean"] = outputs.phi_gate_mean or 0.0
+                    metrics["phi_gate_std"] = outputs.phi_gate_std or 0.0
+                    metrics["phi_gate_p25"] = outputs.phi_gate_p25 or 0.0
+                    metrics["phi_gate_p75"] = outputs.phi_gate_p75 or 0.0
+                    metrics["phi_gate_ramp"] = outputs.phi_gate_ramp or 0.0
                 if outputs.recon_mae_theta_corr is not None:
                     metrics["recon_mae_theta_corr"] = outputs.recon_mae_theta_corr
                 if outputs.forward_consistency is not None:
@@ -229,6 +235,11 @@ def _stage1_loop(
                             "m3_improve_rate_1deg": outputs.m3_improve_rate_1deg or 0.0,
                             "m3_worsen_rate_1deg": outputs.m3_worsen_rate_1deg or 0.0,
                             "m3_err_delta_mean_deg": outputs.m3_err_delta_mean_deg or 0.0,
+                            "m3_gate_std": outputs.m3_gate_std or 0.0,
+                            "m3_gate_p25": outputs.m3_gate_p25 or 0.0,
+                            "m3_gate_p75": outputs.m3_gate_p75 or 0.0,
+                            "m3_quantile_disabled": float(1.0 if outputs.m3_quantile_disabled else 0.0) if outputs.m3_quantile_disabled is not None else 0.0,
+                            "m3_ramp": outputs.m3_ramp or 0.0,
                         }
                     )
                     if outputs.phi_quality_improve_corr is not None:
@@ -268,6 +279,13 @@ def _stage1_loop(
                     if outputs.phi_gate_threshold is not None:
                         base_msg += " phi_thr=%.4f"
                         args_list.append(metrics["phi_gate_threshold"])
+                    if getattr(outputs, "phi_gate_mean", None) is not None:
+                        base_msg += " phi_mean=%.4f phi_std=%.4f"
+                        args_list.append(metrics.get("phi_gate_mean", 0.0))
+                        args_list.append(metrics.get("phi_gate_std", 0.0))
+                    if getattr(outputs, "phi_gate_ramp", None) is not None:
+                        base_msg += " phi_ramp=%.2f"
+                        args_list.append(metrics.get("phi_gate_ramp", 0.0))
                     if outputs.recon_mae_theta_corr is not None:
                         base_msg += " mae_theta_corr=%.4f"
                         args_list.append(metrics["recon_mae_theta_corr"])
@@ -277,7 +295,7 @@ def _stage1_loop(
                     if outputs.m3_enabled is not None:
                         base_msg += (
                             " m3_enabled=%.0f gate_mean=%.4f keep=%.4f gate_p10=%.4f gate_p90=%.4f "
-                            "thr=%.4f tau=%.2f gain=%.3f delta_cap=%.2f clip=%.4f gate_ent=%.4f "
+                            "m3_thr=%.4f m3_tau=%.2f gain=%.3f delta_cap=%.2f clip=%.4f gate_ent=%.4f "
                             "resid_mean=%.4f resid_p90=%.4f dir_agree=%.3f impro@1=%.3f "
                             "worsen@1=%.3f err_delta=%.3f kappa_corr=%.4f"
                         )
@@ -435,6 +453,13 @@ def _stage25_loop(
                     if outputs.phi_gate_threshold is not None:
                         base_msg += " phi_thr=%.4f"
                         args_list.append(metrics.get("phi_gate_threshold", 0.0))
+                    if getattr(outputs, "phi_gate_mean", None) is not None:
+                        base_msg += " phi_mean=%.4f phi_std=%.4f"
+                        args_list.append(metrics.get("phi_gate_mean", 0.0))
+                        args_list.append(metrics.get("phi_gate_std", 0.0))
+                    if getattr(outputs, "phi_gate_ramp", None) is not None:
+                        base_msg += " phi_ramp=%.2f"
+                        args_list.append(metrics.get("phi_gate_ramp", 0.0))
                     if outputs.recon_mae_theta_corr is not None:
                         base_msg += " mae_theta_corr=%.4f"
                         args_list.append(metrics.get("recon_mae_theta_corr", 0.0))
@@ -528,6 +553,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--m3_target_keep_start", type=float, default=None)
     parser.add_argument("--m3_target_keep_end", type=float, default=None)
     parser.add_argument("--m3_quantile_keep", type=float, default=None)
+    parser.add_argument("--m3_quantile_warmup_steps", type=int, default=None)
+    parser.add_argument("--m3_min_keep", type=float, default=None)
     parser.add_argument("--m3_freeze_m2", "--freeze_m2", action="store_true", default=None)
     parser.add_argument("--m3_apply_eval_only", action="store_true")
     parser.add_argument("--phi_gate_disable", action="store_true")
@@ -670,6 +697,10 @@ def main() -> None:
         cfg.train.m3_target_keep_end = args.m3_target_keep_end
     if args.m3_quantile_keep is not None:
         cfg.train.m3_quantile_keep = args.m3_quantile_keep
+    if args.m3_quantile_warmup_steps is not None:
+        cfg.train.m3_quantile_warmup_steps = max(0, args.m3_quantile_warmup_steps)
+    if args.m3_min_keep is not None:
+        cfg.train.m3_min_keep = max(0.0, min(1.0, args.m3_min_keep))
     if args.phi_gate_disable:
         cfg.train.phi_gate_enabled = False
     if args.phi_gate_threshold is not None:

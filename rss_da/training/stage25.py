@@ -1,3 +1,6 @@
+"""Stage-2.5 ?숈뒿 猷⑦봽."""
+from __future__ import annotations
+
 import math
 from dataclasses import dataclass
 from itertools import chain
@@ -5,7 +8,6 @@ from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 
 from rss_da.config import Config
@@ -20,11 +22,12 @@ from rss_da.models.m2 import DoAPredictor
 from rss_da.models.m3 import ResidualCalibrator
 from rss_da.training.ema import build_ema, update_ema
 from rss_da.utils.metrics import circular_mean_error_deg
-from rss_da.utils.phi_gate import compute_phi_gate
+
 
 @dataclass
 class Stage25Outputs:
-    """Stage-2.5 스텝 결과."""
+    """Stage-2.5 ?ㅽ뀦 寃곌낵."""
+
     loss_total: float
     sup_nll: float
     loss_kd: float
@@ -50,20 +53,17 @@ class Stage25Outputs:
     m3_residual_penalty: Optional[float] = None
     m3_gate_entropy: Optional[float] = None
     m3_gate_threshold: Optional[float] = None
-    decoder_recon_mae_4rss: Optional[float] = None
-    decoder_recon_mae_4rss_p90: Optional[float] = None
-    phi_gate_keep_ratio: Optional[float] = None
-    phi_gate_threshold: Optional[float] = None
-    recon_mae_theta_corr: Optional[float] = None
-    forward_consistency: Optional[float] = None
+
 
 def _ensure_two_dim(tensor: torch.Tensor) -> torch.Tensor:
     if tensor.ndim == 3:
         return tensor[:, 0, :]
     return tensor
 
+
 class Stage25Trainer:
-    """Stage-2.5 도메인 적응 학습기."""
+    """Stage-2.5 ?꾨찓???곸쓳 ?숈뒿湲?"""
+
     def __init__(
         self,
         cfg: Config,
@@ -98,7 +98,6 @@ class Stage25Trainer:
             ).to(self.device)
         else:
             self.m3 = None
-        self.total_epochs = max(1, int(cfg.train.epochs))
         self.m3_delta_max_rad = math.radians(cfg.train.m3_delta_max_deg)
         self.m3_delta_warmup_rad = min(self.m3_delta_max_rad, math.radians(cfg.train.m3_delta_warmup_deg))
         self.m3_gain_start = cfg.train.m3_gain_start
@@ -179,7 +178,7 @@ class Stage25Trainer:
         total_span = max(1, self.mix_warmup_steps + self.mix_ramp_steps)
         warmup_steps = int(total_span * cfg.train.m3_warmup_frac)
         self.m3_warmup_steps = max(1, warmup_steps)
-        detach_steps = int(total_span * cfg.train.m3_detach_warmup_epochs / self.total_epochs)
+        detach_steps = int(total_span * cfg.train.m3_detach_warmup_epochs / max(cfg.train.epochs, 1))
         self.m3_detach_steps = max(1, detach_steps if detach_steps > 0 else self.m3_warmup_steps)
         self.m3_detach_m2 = cfg.train.m3_detach_m2
         self.m3_lambda_resid = cfg.train.m3_lambda_resid
@@ -187,7 +186,7 @@ class Stage25Trainer:
         self.m3_lambda_keep = cfg.train.m3_lambda_keep_target
         self.m3_gate_keep_threshold = cfg.train.m3_gate_keep_threshold
         self.m3_quantile_keep = cfg.train.m3_quantile_keep
-        keep_steps = int(total_span * cfg.train.m3_keep_warmup_epochs / self.total_epochs)
+        keep_steps = int(total_span * cfg.train.m3_keep_warmup_epochs / max(cfg.train.epochs, 1))
         self.m3_keep_schedule_steps = max(1, keep_steps if keep_steps > 0 else self.m3_warmup_steps)
         self.m3_target_keep_start = cfg.train.m3_target_keep_start
         self.m3_target_keep_end = cfg.train.m3_target_keep_end
@@ -309,8 +308,8 @@ class Stage25Trainer:
             h5 = self.teacher["e5"](z5d)
             r4_hat = self.teacher["decoder"](h5, mu0)
             h4_hat = self.teacher["e4"](r4_hat)
-            ones_mask = torch.ones(z5d.size(0), 1, device=z5d.device)
-            h = self.teacher["fuse"](h5, h4_hat, ones_mask)
+            mask = torch.zeros(z5d.size(0), 1, device=z5d.device)
+            h = self.teacher["fuse"](h5, h4_hat, mask)
             phi = self.teacher["adapter"](h)
             mu1, kappa1, _ = self.teacher["m2"](z5d, phi.detach())
             mu1 = _ensure_two_dim(mu1)
@@ -322,7 +321,6 @@ class Stage25Trainer:
             "kappa1": kappa1.detach(),
             "phi": phi.detach(),
             "h": h.detach(),
-            "r4_hat": r4_hat.detach(),
         }
 
     def train_step(self, batch: Dict[str, torch.Tensor]) -> Stage25Outputs:
@@ -330,7 +328,7 @@ class Stage25Trainer:
         batch = self._prepare_batch(batch)
         z5d = batch["z5d"]
         theta_gt = batch["theta_gt"]
-        c_meas = batch["c_meas"]  # 상대 dB
+        c_meas = batch["c_meas"]  # ?곷? dB
         if self.cfg.data.input_scale != "relative_db" and "c_meas_abs" in batch:
             c_meas = batch["c_meas_abs"]
         c_meas_rel = batch.get("c_meas_rel")
@@ -344,46 +342,9 @@ class Stage25Trainer:
         h5_s = self.e5(z5d)
         r4_hat_s = self.decoder(h5_s.detach(), mu0_s)
         h4_hat_s = self.e4(r4_hat_s.detach())
-        batch_size = z5d.size(0)
-        ones_mask = torch.ones(batch_size, 1, device=self.device, dtype=h5_s.dtype)
-        teacher_out = self._teacher_forward(z5d)
-        phi_gate_keep_ratio: Optional[float] = None
-        decoder_mae_samples: Optional[torch.Tensor] = None
-        decoder_recon_mae_4rss: Optional[float] = None
-        decoder_recon_mae_4rss_p90: Optional[float] = None
-        forward_consistency: Optional[float] = None
-        recon_mae_theta_corr: Optional[float] = None
-        phi_gate_threshold: Optional[float] = None
-        r4_gt = four_rss if four_rss.numel() == batch_size * 4 else None
-        phi_gate = torch.ones(batch_size, 1, device=self.device, dtype=h5_s.dtype)
-        reference_r4 = r4_gt if r4_gt is not None else teacher_out.get("r4_hat")
-        if reference_r4 is not None:
-            decoder_mae_samples = torch.abs(r4_hat_s.detach() - reference_r4.detach()).mean(dim=-1)
-            decoder_recon_mae_4rss = decoder_mae_samples.mean().item()
-            decoder_recon_mae_4rss_p90 = torch.quantile(decoder_mae_samples, 0.90).item()
-            gate_flat, phi_gate_keep_ratio, phi_gate_threshold = compute_phi_gate(
-                decoder_mae_samples,
-                enabled=self.cfg.train.phi_gate_enabled,
-                threshold=self.cfg.train.phi_gate_threshold,
-                quantile=self.cfg.train.phi_gate_quantile,
-                min_keep=self.cfg.train.phi_gate_min_keep,
-            )
-            phi_gate = gate_flat.unsqueeze(-1).to(dtype=h5_s.dtype)
-        elif self.cfg.train.phi_gate_enabled:
-            phi_gate_keep_ratio = 1.0
-        h_pass0 = self.fuse(h5_s, h4_hat_s, ones_mask)
-        phi_pass0 = self.adapter(h_pass0).detach()
-        h_s = self.fuse(h5_s, h4_hat_s, phi_gate)
-        phi_s = (self.adapter(h_s) * phi_gate).detach()
-        phi_ref = None
-        if r4_gt is not None:
-            h4_gt = self.e4(r4_gt.detach())
-            h_gt = self.fuse(h5_s, h4_gt, ones_mask)
-            phi_ref = self.adapter(h_gt).detach()
-        else:
-            phi_ref = teacher_out["phi"].detach()
-        if phi_ref is not None:
-            forward_consistency = F.cosine_similarity(phi_pass0, phi_ref, dim=-1).mean().item()
+        mask = torch.zeros(z5d.size(0), 1, device=self.device)
+        h_s = self.fuse(h5_s, h4_hat_s, mask)
+        phi_s = self.adapter(h_s).detach()
         mu1_s, kappa1_s, logits_s = self.m2(z5d, phi_s)
         mu1_s = _ensure_two_dim(mu1_s)
         kappa1_s = _ensure_two_dim(kappa1_s)
@@ -479,8 +440,8 @@ class Stage25Trainer:
             input_scale=self.cfg.data.input_scale,
             mix_variance_floor=self.mix_variance_floor,
         )
+        teacher_out = self._teacher_forward(z5d)
         gate = torch.sigmoid(teacher_out["kappa1"].mean(dim=-1, keepdim=True))
-        gate = gate * phi_gate
         kd_losses = kd_loss_bundle(
             {
                 "mu_student": mu1_s,
@@ -584,10 +545,6 @@ class Stage25Trainer:
                 float(self.m3_gate_keep_threshold),
             )
         deg_rmse = circular_mean_error_deg(mu_eval.detach(), theta_gt.detach()).item()
-        if decoder_mae_samples is not None:
-            err = torch.atan2(torch.sin(mu_eval.detach() - theta_gt.detach()), torch.cos(mu_eval.detach() - theta_gt.detach()))
-            err_deg = torch.rad2deg(err.abs()).mean(dim=-1)
-            recon_mae_theta_corr = self._spearman_corr(decoder_mae_samples.detach(), err_deg.detach())
         outputs = Stage25Outputs(
             loss_total=total_loss.detach().item(),
             sup_nll=loss_sup.detach().item(),
@@ -614,12 +571,6 @@ class Stage25Trainer:
             m3_residual_penalty=m3_stats[9] if m3_stats is not None else None,
             m3_gate_entropy=m3_stats[10] if m3_stats is not None else None,
             m3_gate_threshold=m3_stats[11] if m3_stats is not None else None,
-            decoder_recon_mae_4rss=decoder_recon_mae_4rss,
-            decoder_recon_mae_4rss_p90=decoder_recon_mae_4rss_p90,
-            phi_gate_keep_ratio=phi_gate_keep_ratio,
-            phi_gate_threshold=phi_gate_threshold,
-            recon_mae_theta_corr=recon_mae_theta_corr,
-            forward_consistency=forward_consistency,
         )
         return outputs
 

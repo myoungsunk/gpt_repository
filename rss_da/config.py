@@ -65,6 +65,8 @@ class TrainConfig:
     m3_keep_warmup_epochs: int = 5
     m3_gate_tau: float = 1.0
     m3_quantile_keep: Optional[float] = None
+    m3_quantile_warmup_steps: int = 0
+    m3_min_keep: float = 0.0
     phi_gate_enabled: bool = True
     phi_gate_threshold: Optional[float] = None
     phi_gate_quantile: Optional[float] = 0.6

@@ -1,83 +1,309 @@
-diff --git a/rss_da/utils/phi_gate.py b/rss_da/utils/phi_gate.py
-index c302d6f83a02da2fde8e20234f037dc81e2c132c..7013a0cfb3ce1aca67b0975aecafda4b68f7b59a 100644
---- a/rss_da/utils/phi_gate.py
-+++ b/rss_da/utils/phi_gate.py
-@@ -1,69 +1,77 @@
- """Utilities for φ quality gating based on decoder reconstruction error."""
+diff --git a/rss_da/training/stage1.py b/rss_da/training/stage1.py
+index 12c3af4968769fe818ce42007774f51ba73e4419..610928119f95d7f978f981ec65fce055e0c45922 100644
+--- a/rss_da/training/stage1.py
++++ b/rss_da/training/stage1.py
+@@ -1,90 +1,92 @@
+ """Stage-1 학습 루프."""
  from __future__ import annotations
  
+ import logging
  import math
- from typing import Optional, Tuple
+ from dataclasses import dataclass
+ from itertools import chain
+ from typing import Dict, Optional
  
  import torch
+ import torch.nn as nn
++import torch.nn.functional as F
+ import torch.optim as optim
+ 
+ from rss_da.config import Config
+ from rss_da.losses.recon import recon_loss
+ from rss_da.losses.vm_nll import von_mises_nll
+ from rss_da.models.decoder import DecoderD
+ from rss_da.models.encoders import Adapter, E4, E5, Fuse
+ from rss_da.models.m2 import DoAPredictor
+ from rss_da.models.m3 import ResidualCalibrator
+ from rss_da.utils.metrics import circular_mean_error_deg
++from rss_da.utils.phi_gate import compute_phi_gate
+ 
+ @dataclass
+ class Stage1Outputs:
  
  
- def compute_phi_gate(
-     errors: torch.Tensor,
-     *,
-     enabled: bool = True,
-     threshold: Optional[float] = None,
-     quantile: Optional[float] = 0.6,
-     min_keep: float = 0.0,
-+    min_samples_for_quantile: int = 8,
- ) -> Tuple[torch.Tensor, float, Optional[float]]:
-     """Resolve a binary gate from reconstruction errors.
+     """단일 스텝 결과."""
+     loss_total: float
+     sup0_nll: float
+     sup1_nll: float
+     recon_data_raw: float
+     recon_mix_norm: float
+     recon_mix_raw: float
+     recon_phys: float
+     deg_rmse: float
+     kappa_mean: float
+     mix_weight: float
+     mix_weighted_norm: float
+     mix_var: float
+     m3_enabled: Optional[float] = None
+     m3_gate_mean: Optional[float] = None
+     m3_gate_p10: Optional[float] = None
+     m3_gate_p90: Optional[float] = None
+     m3_keep_ratio: Optional[float] = None
+     m3_resid_abs_mean_deg: Optional[float] = None
+     m3_resid_abs_p90_deg: Optional[float] = None
+     m3_delta_clip_rate: Optional[float] = None
+     m3_kappa_corr_spearman: Optional[float] = None
+     m3_residual_penalty: Optional[float] = None
+     m3_gate_entropy: Optional[float] = None
+     m3_gate_threshold: Optional[float] = None
+     m3_gate_temp_tau: Optional[float] = None
+     m3_delta_cap_deg_effective: Optional[float] = None
+     m3_gain_applied: Optional[float] = None
+     m3_resid_dir_agree_rate: Optional[float] = None
+     m3_improve_rate_1deg: Optional[float] = None
+     m3_worsen_rate_1deg: Optional[float] = None
+     m3_err_delta_mean_deg: Optional[float] = None
+     phi_quality_improve_corr: Optional[float] = None
+     decoder_recon_mae_4rss: Optional[float] = None
++    decoder_recon_mae_4rss_p90: Optional[float] = None
++    phi_gate_keep_ratio: Optional[float] = None
++    recon_mae_theta_corr: Optional[float] = None
++    forward_consistency: Optional[float] = None
+     grad_norm_m3: Optional[float] = None
+-<<<<<<< Updated upstream
+-=======
+-
+->>>>>>> Stashed changes
  
-     Args:
-         errors: Per-sample reconstruction errors ``[B]`` (smaller is better).
-         enabled: Whether gating is enabled. When ``False`` every sample is kept.
-         threshold: Absolute threshold ``τ``. If provided it takes precedence over
-             ``quantile``.
-         quantile: Optional quantile ``Q_p`` for adaptive thresholding when
-             ``threshold`` is ``None``.
-         min_keep: Lower bound on the keep ratio to avoid degenerate all-zero gates.
-+        min_samples_for_quantile: Minimum batch size required to trust a quantile
-+            estimate. Smaller batches fall back to the mean error as a stable
-+            threshold.
+ def _ensure_two_dim(tensor: torch.Tensor) -> torch.Tensor:
+     """혼합 모델 대응."""
+     if tensor.ndim == 3:
+         return tensor[:, 0, :]
+     return tensor
  
-     Returns:
-         mask: ``torch.FloatTensor[B]`` containing zeros/ones.
-         keep_ratio: Fraction of kept samples (after enforcing ``min_keep``).
-         used_threshold: Threshold that produced the mask, or ``None`` if gating
-             was effectively disabled.
-     """
+ class Stage1Trainer:
+     """Stage-1 학습기."""
+     def __init__(self, cfg: Config, device: Optional[torch.device] = None) -> None:
+         self.cfg = cfg
+         self.phase = cfg.train.phase
+         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+         latent_dim = cfg.train.latent_dim
+         phi_dim = cfg.train.phi_dim
+         dropout = cfg.train.dropout_p
+         self.e4 = E4(latent_dim=latent_dim, dropout_p=dropout).to(self.device)
+         self.e5 = E5(latent_dim=latent_dim, dropout_p=dropout).to(self.device)
+         self.fuse = Fuse(latent_dim=latent_dim, dropout_p=dropout).to(self.device)
+         self.adapter = Adapter(latent_dim=latent_dim, phi_dim=phi_dim, dropout_p=dropout).to(self.device)
+         self.decoder = DecoderD(latent_dim=latent_dim, dropout_p=dropout).to(self.device)
+         self.m2 = DoAPredictor(phi_dim=phi_dim, latent_dim=latent_dim, dropout_p=dropout).to(self.device)
+         phase_enables_m3 = self.phase == "finetune_m3"
+         self.m3_enabled = cfg.train.use_m3 or phase_enables_m3
+         if self.phase == "pretrain_m2":
+@@ -316,66 +318,91 @@ class Stage1Trainer:
+                 z5d.max().item(),
+             )
+             logging.info("[Stage-1][debug] z5d stats mean=%.3f std=%.3f min=%.3f max=%.3f", *stats)
+             self._debug_stats_printed = True
+         self.optimizer.zero_grad()
+         mu0, kappa0, _ = self.m2(z5d, None)
+         mu0 = _ensure_two_dim(mu0)
+         kappa0 = _ensure_two_dim(kappa0)
+         loss_sup0 = von_mises_nll(mu0, kappa0, theta_gt)
+         recon = {
+             "mix": torch.zeros_like(loss_sup0),
+             "mix_raw": torch.zeros_like(loss_sup0),
+             "mix_var": torch.ones_like(loss_sup0),
+             "data": torch.zeros_like(loss_sup0),
+             "phys": torch.zeros_like(loss_sup0),
+             "total": torch.zeros_like(loss_sup0),
+         }
+         mu1 = mu0
+         kappa1 = kappa0
+         loss_sup1 = torch.zeros_like(loss_sup0)
+         m3_resid_penalty = torch.zeros_like(loss_sup0)
+         m3_gate_penalty = torch.zeros_like(loss_sup0)
+         m3_stats: Optional[Dict[str, Optional[float]]] = None
+         mu_eval = mu0
+         decoder_recon_mae_4rss: Optional[float] = None
++        decoder_recon_mae_4rss_p90: Optional[float] = None
+         decoder_mae_samples: Optional[torch.Tensor] = None
++        phi_gate_keep_ratio: Optional[float] = None
++        forward_consistency: Optional[float] = None
++        recon_mae_theta_corr: Optional[float] = None
+         if enable_pass1:
+             h5 = self.e5(z5d)  # torch.FloatTensor[B,H]
+             r4_hat = self.decoder(h5.detach(), mu0)  # torch.FloatTensor[B,4]
+             h4_hat = self.e4(r4_hat.detach())  # torch.FloatTensor[B,H]
+-            mask = torch.zeros(z5d.size(0), 1, device=self.device)
+-            h = self.fuse(h5, h4_hat, mask)
+-            phi = self.adapter(h).detach()
++            batch_size = z5d.size(0)
++            ones_mask = torch.ones(batch_size, 1, device=self.device, dtype=h5.dtype)
++            r4_gt = four_rss if four_rss.numel() == batch_size * 4 else None
++            phi_gate = torch.ones(batch_size, 1, device=self.device, dtype=h5.dtype)
++            if r4_gt is not None:
++                decoder_mae_samples = torch.abs(r4_hat.detach() - r4_gt.detach()).mean(dim=-1)
++                decoder_recon_mae_4rss = decoder_mae_samples.mean().item()
++                decoder_recon_mae_4rss_p90 = torch.quantile(decoder_mae_samples, 0.90).item()
++                gate_flat, phi_gate_keep_ratio, _ = compute_phi_gate(
++                    decoder_mae_samples,
++                    enabled=self.cfg.train.phi_gate_enabled,
++                    threshold=self.cfg.train.phi_gate_threshold,
++                    quantile=self.cfg.train.phi_gate_quantile,
++                    min_keep=self.cfg.train.phi_gate_min_keep,
++                )
++                phi_gate = gate_flat.unsqueeze(-1).to(dtype=h5.dtype)
++            elif self.cfg.train.phi_gate_enabled:
++                phi_gate_keep_ratio = 1.0
++            h_pass0 = self.fuse(h5, h4_hat, ones_mask)
++            phi_pass0 = self.adapter(h_pass0).detach()
++            h = self.fuse(h5, h4_hat, phi_gate)
++            phi = (self.adapter(h) * phi_gate).detach()
+             mu1, kappa1, _ = self.m2(z5d, phi)
+             mu1 = _ensure_two_dim(mu1)
+             kappa1 = _ensure_two_dim(kappa1)
+             mu_eval = mu1
+-            r4_gt = four_rss if four_rss.numel() == z5d.size(0) * 4 else None
++            phi_gt = None
+             if r4_gt is not None:
+-                decoder_mae_samples = torch.abs(r4_hat.detach() - r4_gt.detach()).mean(dim=-1)
+-                decoder_recon_mae_4rss = decoder_mae_samples.mean().item()
++                h4_gt = self.e4(r4_gt.detach())
++                h_gt = self.fuse(h5, h4_gt, ones_mask)
++                phi_gt = self.adapter(h_gt).detach()
++                forward_consistency = F.cosine_similarity(phi_pass0, phi_gt, dim=-1).mean().item()
+             if self.m3_enabled and self.m3 is not None:
+                 c_feat = c_meas_rel if c_meas_rel is not None else c_meas
+                 features = self._assemble_m3_features(z5d, phi, c_feat, four_rss, mu1, kappa1)
+                 ramp, delta_cap, gain, keep_target = self._m3_controls()
+                 detached_for_warmup = False
+                 if self.m3_detach_m2 and self.global_step < self.m3_detach_steps:
+                     detached_for_warmup = True
+                 detach_inputs = self.m3_freeze_m2 or detached_for_warmup
+                 features_in = features.detach() if detach_inputs else features
+                 mu_in = mu1.detach() if detach_inputs else mu1
+                 kappa_in = kappa1.detach() if detach_inputs else kappa1
+                 mu_pre = mu1.detach()
+                 m3_out = self.m3(
+                     features_in,
+                     mu_in,
+                     kappa_in,
+                     ramp=ramp,
+                     delta_max=delta_cap,
+                     gain=gain,
+                     gate_threshold=self.m3_gate_keep_threshold,
+                     extras={},
+                 )
+                 mu_ref = m3_out["mu_ref"]
+                 gate = m3_out["gate"]
+                 gate_raw = m3_out["gate_raw"]
+@@ -494,50 +521,54 @@ class Stage1Trainer:
+         if self.m3 is not None:
+             total_sq = 0.0
+             for param in self.m3.parameters():
+                 if param.grad is not None:
+                     total_sq += float(param.grad.detach().pow(2).sum().item())
+             if total_sq > 0.0:
+                 grad_norm_m3 = math.sqrt(total_sq)
+             else:
+                 grad_norm_m3 = 0.0
+         if self.cfg.train.grad_clip:
+             torch.nn.utils.clip_grad_norm_(
+                 list(chain(
+                     self.e4.parameters(),
+                     self.e5.parameters(),
+                     self.fuse.parameters(),
+                     self.adapter.parameters(),
+                     self.decoder.parameters(),
+                     self.m2.parameters(),
+                     self.m3.parameters() if self.m3 is not None else [],
+                 )),
+                 self.cfg.train.grad_clip,
+             )
+         self.optimizer.step()
+         self.global_step += 1
+         deg_rmse = circular_mean_error_deg(mu_eval.detach(), theta_gt.detach()).item()
++        if decoder_mae_samples is not None:
++            err = torch.atan2(torch.sin(mu_eval.detach() - theta_gt.detach()), torch.cos(mu_eval.detach() - theta_gt.detach()))
++            err_deg = torch.rad2deg(err.abs()).mean(dim=-1)
++            recon_mae_theta_corr = self._spearman_corr(decoder_mae_samples.detach(), err_deg.detach())
+         if m3_stats is None and self.m3_enabled:
+             m3_stats = {
+                 "enabled": 1.0,
+                 "gate_mean": 0.0,
+                 "gate_p10": 0.0,
+                 "gate_p90": 0.0,
+                 "keep_ratio": 0.0,
+                 "resid_mean_deg": 0.0,
+                 "resid_p90_deg": 0.0,
+                 "clip_rate": 0.0,
+                 "kappa_corr": 0.0,
+                 "resid_penalty": m3_resid_penalty.detach().item(),
+                 "gate_penalty": m3_gate_penalty.detach().item(),
+                 "gate_threshold": float(self.m3_gate_keep_threshold),
+                 "gate_entropy": 0.0,
+                 "delta_cap_deg": math.degrees(self.m3_delta_warmup_rad),
+                 "gain": self.m3_gain_start,
+                 "gate_tau": self.m3_gate_tau,
+                 "resid_dir_agree_rate": 0.0,
+                 "improve_rate_1deg": 0.0,
+                 "worsen_rate_1deg": 0.0,
+                 "err_delta_mean_deg": 0.0,
+                 "phi_quality_corr": None,
+             }
+         result = Stage1Outputs(
+@@ -552,50 +583,54 @@ class Stage1Trainer:
+             kappa_mean=kappa1.detach().mean().item(),
+             mix_weight=float(mix_weight),
+             mix_weighted_norm=(mix_weight * recon["mix"]).detach().item(),
+             mix_var=recon["mix_var"].detach().item(),
+             m3_enabled=m3_stats["enabled"] if m3_stats is not None else None,
+             m3_gate_mean=m3_stats["gate_mean"] if m3_stats is not None else None,
+             m3_gate_p10=m3_stats["gate_p10"] if m3_stats is not None else None,
+             m3_gate_p90=m3_stats["gate_p90"] if m3_stats is not None else None,
+             m3_keep_ratio=m3_stats["keep_ratio"] if m3_stats is not None else None,
+             m3_resid_abs_mean_deg=m3_stats["resid_mean_deg"] if m3_stats is not None else None,
+             m3_resid_abs_p90_deg=m3_stats["resid_p90_deg"] if m3_stats is not None else None,
+             m3_delta_clip_rate=m3_stats["clip_rate"] if m3_stats is not None else None,
+             m3_kappa_corr_spearman=m3_stats["kappa_corr"] if m3_stats is not None else None,
+             m3_residual_penalty=m3_stats["resid_penalty"] if m3_stats is not None else None,
+             m3_gate_entropy=m3_stats["gate_entropy"] if m3_stats is not None else None,
+             m3_gate_threshold=m3_stats["gate_threshold"] if m3_stats is not None else None,
+             m3_gate_temp_tau=m3_stats["gate_tau"] if m3_stats is not None else None,
+             m3_delta_cap_deg_effective=m3_stats["delta_cap_deg"] if m3_stats is not None else None,
+             m3_gain_applied=m3_stats["gain"] if m3_stats is not None else None,
+             m3_resid_dir_agree_rate=m3_stats["resid_dir_agree_rate"] if m3_stats is not None else None,
+             m3_improve_rate_1deg=m3_stats["improve_rate_1deg"] if m3_stats is not None else None,
+             m3_worsen_rate_1deg=m3_stats["worsen_rate_1deg"] if m3_stats is not None else None,
+             m3_err_delta_mean_deg=m3_stats["err_delta_mean_deg"] if m3_stats is not None else None,
+             phi_quality_improve_corr=m3_stats["phi_quality_corr"] if m3_stats is not None else None,
+             decoder_recon_mae_4rss=decoder_recon_mae_4rss,
++            decoder_recon_mae_4rss_p90=decoder_recon_mae_4rss_p90,
++            phi_gate_keep_ratio=phi_gate_keep_ratio,
++            recon_mae_theta_corr=recon_mae_theta_corr,
++            forward_consistency=forward_consistency,
+             grad_norm_m3=grad_norm_m3,
+         )
+         return result
  
-     if errors.numel() == 0 or not enabled:
-         mask = torch.ones_like(errors, dtype=errors.dtype)
-         return mask, 1.0 if errors.numel() > 0 else 0.0, None
+     def modules(self) -> Dict[str, nn.Module]:
+         """모듈 접근."""
  
-     errs = errors.detach()
-     used_threshold: Optional[float] = None
-     mask = torch.ones_like(errs, dtype=errs.dtype)
+         modules: Dict[str, nn.Module] = {
+             "e4": self.e4,
+             "e5": self.e5,
+             "fuse": self.fuse,
+             "adapter": self.adapter,
+             "decoder": self.decoder,
+             "m2": self.m2,
+         }
+         if self.m3 is not None:
+             modules["m3"] = self.m3
+         return modules
  
-     if threshold is not None:
-         used_threshold = float(threshold)
-     elif quantile is not None:
-         q = float(min(max(quantile, 0.0), 1.0))
--        used_threshold = torch.quantile(errs, q).item()
-+        if errs.numel() >= max(1, min_samples_for_quantile):
-+            used_threshold = torch.quantile(errs, q).item()
-+        else:
-+            # 작은 배치에서는 분위수 추정이 불안정하므로 평균을 대체 임계값으로 사용
-+            used_threshold = errs.mean().item()
- 
-     if used_threshold is not None:
-         mask = (errs <= used_threshold).to(dtype=errs.dtype)
- 
-     keep_ratio = mask.mean().item() if mask.numel() > 0 else 0.0
- 
-     if min_keep > 0.0 and mask.numel() > 0:
-         target = float(min(max(min_keep, 0.0), 1.0))
-         if keep_ratio < target:
-             k = max(1, int(math.ceil(target * mask.numel())))
-             values, indices = torch.topk(errs, k, largest=False)
-             mask.zero_()
-             mask[indices] = 1.0
-             keep_ratio = float(k) / float(mask.numel())
-             used_threshold = values.max().item() if values.numel() > 0 else used_threshold
- 
-     return mask, keep_ratio, used_threshold
- 
- 
- __all__ = ["compute_phi_gate"]
- 
+     def _mix_weight(self) -> float:
+         warmup = self.mix_warmup_steps
+         ramp = max(1, self.mix_ramp_steps)
+         if self.global_step < warmup:
+             return 0.0
+         progress = min(1.0, (self.global_step - warmup) / ramp)
