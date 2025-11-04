@@ -1394,11 +1394,7 @@ import logging
 import math
 from dataclasses import dataclass
 from itertools import chain
-<<<<<<< Updated upstream
 from typing import Dict, Optional
-=======
-from typing import Dict, Optional, Tuple
->>>>>>> Stashed changes
 
 import torch
 import torch.nn as nn
@@ -1413,19 +1409,11 @@ from rss_da.models.m2 import DoAPredictor
 from rss_da.models.m3 import ResidualCalibrator
 from rss_da.utils.metrics import circular_mean_error_deg
 
-<<<<<<< Updated upstream
 @dataclass
 class Stage1Outputs:
 
 
     """?⑥씪 ?ㅽ뀦 寃곌낵."""
-=======
-
-@dataclass
-class Stage1Outputs:
-    """?⑥씪 ?ㅽ뀦 寃곌낵."""
-
->>>>>>> Stashed changes
     loss_total: float
     sup0_nll: float
     sup1_nll: float
@@ -1450,7 +1438,6 @@ class Stage1Outputs:
     m3_residual_penalty: Optional[float] = None
     m3_gate_entropy: Optional[float] = None
     m3_gate_threshold: Optional[float] = None
-<<<<<<< Updated upstream
     m3_gate_temp_tau: Optional[float] = None
     m3_delta_cap_deg_effective: Optional[float] = None
     m3_gain_applied: Optional[float] = None
@@ -1464,26 +1451,12 @@ class Stage1Outputs:
 
 def _ensure_two_dim(tensor: torch.Tensor) -> torch.Tensor:
     """?쇳빀 紐⑤뜽 ???"""
-=======
-
-
-def _ensure_two_dim(tensor: torch.Tensor) -> torch.Tensor:
-    """?쇳빀 紐⑤뜽 ???"""
-
->>>>>>> Stashed changes
     if tensor.ndim == 3:
         return tensor[:, 0, :]
     return tensor
 
-<<<<<<< Updated upstream
 class Stage1Trainer:
     """Stage-1 ?숈뒿湲?"""
-=======
-
-class Stage1Trainer:
-    """Stage-1 ?숈뒿湲?"""
-
->>>>>>> Stashed changes
     def __init__(self, cfg: Config, device: Optional[torch.device] = None) -> None:
         self.cfg = cfg
         self.phase = cfg.train.phase
@@ -1515,10 +1488,7 @@ class Stage1Trainer:
             ).to(self.device)
         else:
             self.m3 = None
-<<<<<<< Updated upstream
         self.total_epochs = max(1, int(cfg.train.epochs))
-=======
->>>>>>> Stashed changes
         self.m3_delta_max_rad = math.radians(cfg.train.m3_delta_max_deg)
         self.m3_delta_warmup_rad = min(self.m3_delta_max_rad, math.radians(cfg.train.m3_delta_warmup_deg))
         self.m3_gain_start = cfg.train.m3_gain_start
@@ -1526,10 +1496,7 @@ class Stage1Trainer:
         self.m3_gain_ramp_steps = max(0, cfg.train.m3_gain_ramp_steps)
         self.m3_apply_eval_only = cfg.train.m3_apply_eval_only
         self.m3_freeze_m2 = cfg.train.m3_freeze_m2 or (self.phase == "finetune_m3")
-<<<<<<< Updated upstream
         self.m3_gate_tau = cfg.train.m3_gate_tau
-=======
->>>>>>> Stashed changes
         base_params = list(
             chain(
                 self.e4.parameters(),
@@ -1573,11 +1540,7 @@ class Stage1Trainer:
         total_span = max(1, self.mix_warmup_steps + self.mix_ramp_steps)
         warmup_steps = int(total_span * cfg.train.m3_warmup_frac)
         self.m3_warmup_steps = max(1, warmup_steps)
-<<<<<<< Updated upstream
         detach_steps = int(total_span * cfg.train.m3_detach_warmup_epochs / self.total_epochs)
-=======
-        detach_steps = int(total_span * cfg.train.m3_detach_warmup_epochs / max(cfg.train.epochs, 1))
->>>>>>> Stashed changes
         self.m3_detach_steps = max(1, detach_steps if detach_steps > 0 else self.m3_warmup_steps)
         self.m3_detach_m2 = cfg.train.m3_detach_m2
         self.m3_lambda_resid = cfg.train.m3_lambda_resid
@@ -1585,7 +1548,6 @@ class Stage1Trainer:
         self.m3_lambda_keep = cfg.train.m3_lambda_keep_target
         self.m3_gate_keep_threshold = cfg.train.m3_gate_keep_threshold
         self.m3_quantile_keep = cfg.train.m3_quantile_keep
-<<<<<<< Updated upstream
         keep_steps = int(total_span * cfg.train.m3_keep_warmup_epochs / self.total_epochs)
         self.m3_keep_schedule_steps = max(1, keep_steps if keep_steps > 0 else self.m3_warmup_steps)
         self.m3_target_keep_start = cfg.train.m3_target_keep_start
@@ -1612,12 +1574,6 @@ class Stage1Trainer:
                 self.m3_gain_end,
                 cfg.train.m3_delta_max_deg,
             )
-=======
-        keep_steps = int(total_span * cfg.train.m3_keep_warmup_epochs / max(cfg.train.epochs, 1))
-        self.m3_keep_schedule_steps = max(1, keep_steps if keep_steps > 0 else self.m3_warmup_steps)
-        self.m3_target_keep_start = cfg.train.m3_target_keep_start
-        self.m3_target_keep_end = cfg.train.m3_target_keep_end
->>>>>>> Stashed changes
 
     def train(self, mode: bool = True) -> None:
         self.e4.train(mode)
@@ -1764,15 +1720,10 @@ class Stage1Trainer:
         loss_sup1 = torch.zeros_like(loss_sup0)
         m3_resid_penalty = torch.zeros_like(loss_sup0)
         m3_gate_penalty = torch.zeros_like(loss_sup0)
-<<<<<<< Updated upstream
         m3_stats: Optional[Dict[str, Optional[float]]] = None
         mu_eval = mu0
         decoder_recon_mae_4rss: Optional[float] = None
         decoder_mae_samples: Optional[torch.Tensor] = None
-=======
-        m3_stats: Optional[Tuple[float, float, float, float, float, float, float, float, float, float, float]] = None
-        mu_eval = mu0
->>>>>>> Stashed changes
         if enable_pass1:
             h5 = self.e5(z5d)  # torch.FloatTensor[B,H]
             r4_hat = self.decoder(h5.detach(), mu0)  # torch.FloatTensor[B,4]
@@ -1784,13 +1735,10 @@ class Stage1Trainer:
             mu1 = _ensure_two_dim(mu1)
             kappa1 = _ensure_two_dim(kappa1)
             mu_eval = mu1
-<<<<<<< Updated upstream
             r4_gt = four_rss if four_rss.numel() == z5d.size(0) * 4 else None
             if r4_gt is not None:
                 decoder_mae_samples = torch.abs(r4_hat.detach() - r4_gt.detach()).mean(dim=-1)
                 decoder_recon_mae_4rss = decoder_mae_samples.mean().item()
-=======
->>>>>>> Stashed changes
             if self.m3_enabled and self.m3 is not None:
                 c_feat = c_meas_rel if c_meas_rel is not None else c_meas
                 features = self._assemble_m3_features(z5d, phi, c_feat, four_rss, mu1, kappa1)
@@ -1802,10 +1750,7 @@ class Stage1Trainer:
                 features_in = features.detach() if detach_inputs else features
                 mu_in = mu1.detach() if detach_inputs else mu1
                 kappa_in = kappa1.detach() if detach_inputs else kappa1
-<<<<<<< Updated upstream
                 mu_pre = mu1.detach()
-=======
->>>>>>> Stashed changes
                 m3_out = self.m3(
                     features_in,
                     mu_in,
@@ -1856,7 +1801,6 @@ class Stage1Trainer:
                     resid_mean_deg = resid_abs_deg.mean().item()
                     resid_p90_deg = torch.quantile(resid_abs_deg, 0.90).item()
                     clip_rate = (clip_mask & (keep_mask.bool())).float().mean().item()
-<<<<<<< Updated upstream
                     err_pre = torch.atan2(torch.sin(mu_pre - theta_gt), torch.cos(mu_pre - theta_gt))
                     err_post = torch.atan2(torch.sin(mu_eval - theta_gt), torch.cos(mu_eval - theta_gt))
                     err_pre_deg = torch.rad2deg(err_pre.abs()).mean(dim=-1)
@@ -1906,36 +1850,6 @@ class Stage1Trainer:
             input_scale=self.cfg.data.input_scale,
             mix_variance_floor=self.mix_variance_floor,
         )
-=======
-                    err = torch.atan2(torch.sin(mu_eval - theta_gt), torch.cos(mu_eval - theta_gt)).abs()
-                    err_deg = torch.rad2deg(err).mean(dim=-1)
-                    kappa_sample = kappa1.mean(dim=-1)
-                    kappa_corr = self._spearman_corr(kappa_sample.detach(), err_deg.detach())
-                    m3_stats = (
-                        1.0,
-                        gate_mean,
-                        gate_p10,
-                        gate_p90,
-                        keep_ratio,
-                        resid_mean_deg,
-                        resid_p90_deg,
-                        clip_rate,
-                        kappa_corr,
-                        m3_resid_penalty.detach().item(),
-                        m3_gate_penalty.detach().item(),
-                        threshold_used,
-                    )
-            loss_sup1 = von_mises_nll(mu1, kappa1, theta_gt)
-            r4_gt = four_rss if four_rss.numel() == z5d.size(0) * 4 else None
-            recon = recon_loss(
-                r4_hat,
-                r4_gt_dbm=r4_gt,
-                c_meas_dbm=c_meas,
-                c_meas_rel_db=c_meas_rel,
-                input_scale=self.cfg.data.input_scale,
-                mix_variance_floor=self.mix_variance_floor,
-            )
->>>>>>> Stashed changes
         w_sup, _, w_mix, _, w_phys = self.cfg.train.loss_weights
         mix_scale = self._mix_weight()
         mix_weight = min(w_mix * mix_scale, self.mix_weight_cap)
@@ -1948,7 +1862,6 @@ class Stage1Trainer:
             + m3_gate_penalty
         )
         loss_total.backward()
-<<<<<<< Updated upstream
         grad_norm_m3: Optional[float] = None
         if self.m3 is not None:
             total_sq = 0.0
@@ -1959,8 +1872,6 @@ class Stage1Trainer:
                 grad_norm_m3 = math.sqrt(total_sq)
             else:
                 grad_norm_m3 = 0.0
-=======
->>>>>>> Stashed changes
         if self.cfg.train.grad_clip:
             torch.nn.utils.clip_grad_norm_(
                 list(chain(
@@ -1978,7 +1889,6 @@ class Stage1Trainer:
         self.global_step += 1
         deg_rmse = circular_mean_error_deg(mu_eval.detach(), theta_gt.detach()).item()
         if m3_stats is None and self.m3_enabled:
-<<<<<<< Updated upstream
             m3_stats = {
                 "enabled": 1.0,
                 "gate_mean": 0.0,
@@ -2002,22 +1912,6 @@ class Stage1Trainer:
                 "err_delta_mean_deg": 0.0,
                 "phi_quality_corr": None,
             }
-=======
-            m3_stats = (
-                1.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                m3_resid_penalty.detach().item(),
-                m3_gate_penalty.detach().item(),
-                float(self.m3_gate_keep_threshold),
-            )
->>>>>>> Stashed changes
         result = Stage1Outputs(
             loss_total=loss_total.detach().item(),
             sup0_nll=loss_sup0.detach().item(),
@@ -2031,7 +1925,6 @@ class Stage1Trainer:
             mix_weight=float(mix_weight),
             mix_weighted_norm=(mix_weight * recon["mix"]).detach().item(),
             mix_var=recon["mix_var"].detach().item(),
-<<<<<<< Updated upstream
             m3_enabled=m3_stats["enabled"] if m3_stats is not None else None,
             m3_gate_mean=m3_stats["gate_mean"] if m3_stats is not None else None,
             m3_gate_p10=m3_stats["gate_p10"] if m3_stats is not None else None,
@@ -2054,20 +1947,6 @@ class Stage1Trainer:
             phi_quality_improve_corr=m3_stats["phi_quality_corr"] if m3_stats is not None else None,
             decoder_recon_mae_4rss=decoder_recon_mae_4rss,
             grad_norm_m3=grad_norm_m3,
-=======
-            m3_enabled=m3_stats[0] if m3_stats is not None else None,
-            m3_gate_mean=m3_stats[1] if m3_stats is not None else None,
-            m3_gate_p10=m3_stats[2] if m3_stats is not None else None,
-            m3_gate_p90=m3_stats[3] if m3_stats is not None else None,
-            m3_keep_ratio=m3_stats[4] if m3_stats is not None else None,
-            m3_resid_abs_mean_deg=m3_stats[5] if m3_stats is not None else None,
-            m3_resid_abs_p90_deg=m3_stats[6] if m3_stats is not None else None,
-            m3_delta_clip_rate=m3_stats[7] if m3_stats is not None else None,
-            m3_kappa_corr_spearman=m3_stats[8] if m3_stats is not None else None,
-            m3_residual_penalty=m3_stats[9] if m3_stats is not None else None,
-            m3_gate_entropy=m3_stats[10] if m3_stats is not None else None,
-            m3_gate_threshold=m3_stats[11] if m3_stats is not None else None,
->>>>>>> Stashed changes
         )
         return result
 
@@ -2096,12 +1975,6 @@ class Stage1Trainer:
 
 
 __all__ = ["Stage1Trainer", "Stage1Outputs"]
-<<<<<<< Updated upstream
-=======
-"""Stage-2.5 ?숈뒿 猷⑦봽."""
-from __future__ import annotations
-
->>>>>>> Stashed changes
 import math
 from dataclasses import dataclass
 from itertools import chain
@@ -2124,17 +1997,9 @@ from rss_da.models.m3 import ResidualCalibrator
 from rss_da.training.ema import build_ema, update_ema
 from rss_da.utils.metrics import circular_mean_error_deg
 
-<<<<<<< Updated upstream
 @dataclass
 class Stage25Outputs:
     """Stage-2.5 ?ㅽ뀦 寃곌낵."""
-=======
-
-@dataclass
-class Stage25Outputs:
-    """Stage-2.5 ?ㅽ뀦 寃곌낵."""
-
->>>>>>> Stashed changes
     loss_total: float
     sup_nll: float
     loss_kd: float
@@ -2161,24 +2026,13 @@ class Stage25Outputs:
     m3_gate_entropy: Optional[float] = None
     m3_gate_threshold: Optional[float] = None
 
-<<<<<<< Updated upstream
-=======
-
->>>>>>> Stashed changes
 def _ensure_two_dim(tensor: torch.Tensor) -> torch.Tensor:
     if tensor.ndim == 3:
         return tensor[:, 0, :]
     return tensor
 
-<<<<<<< Updated upstream
 class Stage25Trainer:
     """Stage-2.5 ?꾨찓???곸쓳 ?숈뒿湲?"""
-=======
-
-class Stage25Trainer:
-    """Stage-2.5 ?꾨찓???곸쓳 ?숈뒿湲?"""
-
->>>>>>> Stashed changes
     def __init__(
         self,
         cfg: Config,
@@ -2213,10 +2067,7 @@ class Stage25Trainer:
             ).to(self.device)
         else:
             self.m3 = None
-<<<<<<< Updated upstream
         self.total_epochs = max(1, int(cfg.train.epochs))
-=======
->>>>>>> Stashed changes
         self.m3_delta_max_rad = math.radians(cfg.train.m3_delta_max_deg)
         self.m3_delta_warmup_rad = min(self.m3_delta_max_rad, math.radians(cfg.train.m3_delta_warmup_deg))
         self.m3_gain_start = cfg.train.m3_gain_start
@@ -2297,11 +2148,7 @@ class Stage25Trainer:
         total_span = max(1, self.mix_warmup_steps + self.mix_ramp_steps)
         warmup_steps = int(total_span * cfg.train.m3_warmup_frac)
         self.m3_warmup_steps = max(1, warmup_steps)
-<<<<<<< Updated upstream
         detach_steps = int(total_span * cfg.train.m3_detach_warmup_epochs / self.total_epochs)
-=======
-        detach_steps = int(total_span * cfg.train.m3_detach_warmup_epochs / max(cfg.train.epochs, 1))
->>>>>>> Stashed changes
         self.m3_detach_steps = max(1, detach_steps if detach_steps > 0 else self.m3_warmup_steps)
         self.m3_detach_m2 = cfg.train.m3_detach_m2
         self.m3_lambda_resid = cfg.train.m3_lambda_resid
@@ -2309,11 +2156,7 @@ class Stage25Trainer:
         self.m3_lambda_keep = cfg.train.m3_lambda_keep_target
         self.m3_gate_keep_threshold = cfg.train.m3_gate_keep_threshold
         self.m3_quantile_keep = cfg.train.m3_quantile_keep
-<<<<<<< Updated upstream
         keep_steps = int(total_span * cfg.train.m3_keep_warmup_epochs / self.total_epochs)
-=======
-        keep_steps = int(total_span * cfg.train.m3_keep_warmup_epochs / max(cfg.train.epochs, 1))
->>>>>>> Stashed changes
         self.m3_keep_schedule_steps = max(1, keep_steps if keep_steps > 0 else self.m3_warmup_steps)
         self.m3_target_keep_start = cfg.train.m3_target_keep_start
         self.m3_target_keep_end = cfg.train.m3_target_keep_end
