@@ -788,13 +788,10 @@ class TrainConfig:
     m3_keep_warmup_epochs: int = 5
     m3_gate_tau: float = 1.0
     m3_quantile_keep: Optional[float] = None
-<<<<<<< Updated upstream
     phi_gate_enabled: bool = True
     phi_gate_threshold: Optional[float] = None
     phi_gate_quantile: Optional[float] = 0.6
     phi_gate_min_keep: float = 0.0
-=======
->>>>>>> Stashed changes
 
 
 @dataclass
@@ -1035,7 +1032,6 @@ def _stage1_loop(
                     "mix_weighted_norm": outputs.mix_weighted_norm,
                     "mix_var": outputs.mix_var,
                 }
-<<<<<<< Updated upstream
                 if outputs.decoder_recon_mae_4rss is not None:
                     metrics["decoder_recon_mae_4rss"] = outputs.decoder_recon_mae_4rss
                 if outputs.decoder_recon_mae_4rss_p90 is not None:
@@ -1044,8 +1040,6 @@ def _stage1_loop(
                     metrics["phi_gate_keep_ratio"] = outputs.phi_gate_keep_ratio
                 if outputs.recon_mae_theta_corr is not None:
                     metrics["recon_mae_theta_corr"] = outputs.recon_mae_theta_corr
-=======
->>>>>>> Stashed changes
                 if outputs.m3_enabled is not None:
                     metrics.update(
                         {
@@ -1061,7 +1055,6 @@ def _stage1_loop(
                             "m3_residual_penalty": outputs.m3_residual_penalty or 0.0,
                             "m3_gate_entropy": outputs.m3_gate_entropy or 0.0,
                             "m3_gate_threshold": outputs.m3_gate_threshold or 0.0,
-<<<<<<< Updated upstream
                             "m3_gate_temp_tau": outputs.m3_gate_temp_tau or 0.0,
                             "m3_delta_cap_deg_effective": outputs.m3_delta_cap_deg_effective or 0.0,
                             "m3_gain_applied": outputs.m3_gain_applied or 0.0,
@@ -1075,10 +1068,6 @@ def _stage1_loop(
                         metrics["phi_quality_improve_corr"] = outputs.phi_quality_improve_corr
                     if outputs.grad_norm_m3 is not None:
                         metrics["grad_norm_m3"] = outputs.grad_norm_m3
-=======
-                        }
-                    )
->>>>>>> Stashed changes
                 if global_step % cfg.train.log_interval == 0:
                     _log_metrics(logger, global_step, "train", metrics)
                     base_msg = (
@@ -1100,7 +1089,6 @@ def _stage1_loop(
                         metrics["recon_phys"],
                         metrics["deg_rmse"],
                     ]
-<<<<<<< Updated upstream
                     if outputs.decoder_recon_mae_4rss is not None:
                         base_msg += " decoder_mae4=%.4f"
                         args_list.append(metrics["decoder_recon_mae_4rss"])
@@ -1119,20 +1107,12 @@ def _stage1_loop(
                             "thr=%.4f tau=%.2f gain=%.3f delta_cap=%.2f clip=%.4f gate_ent=%.4f "
                             "resid_mean=%.4f resid_p90=%.4f dir_agree=%.3f impro@1=%.3f "
                             "worsen@1=%.3f err_delta=%.3f kappa_corr=%.4f"
-=======
-                    if outputs.m3_enabled is not None:
-                        base_msg += (
-                            " m3_enabled=%.0f m3_gate_mean=%.4f m3_keep_ratio=%.4f "
-                            "m3_resid_abs_mean_deg=%.4f m3_delta_clip_rate=%.4f m3_kappa_corr=%.4f "
-                            "m3_gate_thresh=%.4f"
->>>>>>> Stashed changes
                         )
                         args_list.extend(
                             [
                                 metrics["m3_enabled"],
                                 metrics["m3_gate_mean"],
                                 metrics["m3_keep_ratio"],
-<<<<<<< Updated upstream
                                 metrics["m3_gate_p10"],
                                 metrics["m3_gate_p90"],
                                 metrics["m3_gate_threshold"],
@@ -1156,14 +1136,6 @@ def _stage1_loop(
                         if outputs.grad_norm_m3 is not None:
                             base_msg += " grad_m3=%.4f"
                             args_list.append(metrics["grad_norm_m3"])
-=======
-                                metrics["m3_resid_abs_mean_deg"],
-                                metrics["m3_delta_clip_rate"],
-                                metrics["m3_kappa_corr_spearman"],
-                                metrics["m3_gate_threshold"],
-                            ]
-                        )
->>>>>>> Stashed changes
                     logging.info(base_msg, *args_list)
                 global_step += 1
                 epoch_deg_sum += outputs.deg_rmse
@@ -1229,7 +1201,6 @@ def _stage25_loop(
                     "mix_weighted_norm": outputs.mix_weighted_norm,
                     "mix_var": outputs.mix_var,
                 }
-<<<<<<< Updated upstream
                 if outputs.decoder_recon_mae_4rss is not None:
                     metrics["decoder_recon_mae_4rss"] = outputs.decoder_recon_mae_4rss
                 if outputs.decoder_recon_mae_4rss_p90 is not None:
@@ -1238,8 +1209,6 @@ def _stage25_loop(
                     metrics["phi_gate_keep_ratio"] = outputs.phi_gate_keep_ratio
                 if outputs.recon_mae_theta_corr is not None:
                     metrics["recon_mae_theta_corr"] = outputs.recon_mae_theta_corr
-=======
->>>>>>> Stashed changes
                 if outputs.m3_enabled is not None:
                     metrics.update(
                         {
@@ -1277,7 +1246,6 @@ def _stage25_loop(
                         metrics["loss_align"],
                         metrics["deg_rmse"],
                     ]
-<<<<<<< Updated upstream
                     if outputs.decoder_recon_mae_4rss is not None:
                         base_msg += " decoder_mae4=%.4f"
                         args_list.append(metrics.get("decoder_recon_mae_4rss", 0.0))
@@ -1290,8 +1258,6 @@ def _stage25_loop(
                     if outputs.recon_mae_theta_corr is not None:
                         base_msg += " mae_theta_corr=%.4f"
                         args_list.append(metrics.get("recon_mae_theta_corr", 0.0))
-=======
->>>>>>> Stashed changes
                     if outputs.m3_enabled is not None:
                         base_msg += (
                             " m3_enabled=%.0f m3_gate_mean=%.4f m3_keep_ratio=%.4f "
@@ -1381,13 +1347,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--m3_quantile_keep", type=float, default=None)
     parser.add_argument("--m3_freeze_m2", "--freeze_m2", action="store_true", default=None)
     parser.add_argument("--m3_apply_eval_only", action="store_true")
-<<<<<<< Updated upstream
     parser.add_argument("--phi_gate_disable", action="store_true")
     parser.add_argument("--phi_gate_threshold", type=float, default=None)
     parser.add_argument("--phi_gate_quantile", type=float, default=None)
     parser.add_argument("--phi_gate_min_keep", type=float, default=None)
-=======
->>>>>>> Stashed changes
     parser.add_argument("--use_coral", action="store_true")
     parser.add_argument("--use_dann", action="store_true")
     parser.add_argument("--use_cdan", action="store_true")
@@ -1475,12 +1438,8 @@ def main() -> None:
     cfg.train.use_cdan = args.use_cdan
     cfg.train.gradnorm = args.gradnorm
     cfg.train.uncertainty_weighting = args.uncertainty
-<<<<<<< Updated upstream
     requested_epochs = max(1, int(args.epochs))
     cfg.train.epochs = requested_epochs
-=======
-    cfg.train.epochs = args.epochs
->>>>>>> Stashed changes
     cfg.train.batch_size = args.batch_size
     cfg.train.log_dir = args.logdir
     if args.m3_preset != "none":
@@ -1528,7 +1487,6 @@ def main() -> None:
         cfg.train.m3_target_keep_end = args.m3_target_keep_end
     if args.m3_quantile_keep is not None:
         cfg.train.m3_quantile_keep = args.m3_quantile_keep
-<<<<<<< Updated upstream
     if args.phi_gate_disable:
         cfg.train.phi_gate_enabled = False
     if args.phi_gate_threshold is not None:
@@ -1544,8 +1502,6 @@ def main() -> None:
             requested_epochs,
         )
         cfg.train.epochs = requested_epochs
-=======
->>>>>>> Stashed changes
     cfg.data.input_scale = args.input_scale
     cfg.data.mix_warmup_steps = args.mix_warmup_steps
     cfg.data.mix_ramp_steps = args.mix_ramp_steps
@@ -1557,19 +1513,15 @@ def main() -> None:
     log_dir = Path(args.logdir)
     log_dir.mkdir(parents=True, exist_ok=True)
     _setup_logging(log_dir, args.log_level, args.no_file_log)
-<<<<<<< Updated upstream
     logging.info(
         "Resolved training epochs: cfg=%d (requested --epochs %d)",
         cfg.train.epochs,
         requested_epochs,
     )
-=======
->>>>>>> Stashed changes
     stage1_file = args.stage1_file
     stage25_file = args.stage25_file
     load_path = Path(args.load_m2_ckpt) if args.load_m2_ckpt else None
     if args.stage == "1":
-<<<<<<< Updated upstream
         logging.info("Starting Stage-1 training for %d epochs", cfg.train.epochs)
         _stage1_loop(
             cfg,
@@ -1580,10 +1532,6 @@ def main() -> None:
             stage25_file,
             load_path=load_path,
         )
-=======
-        logging.info("Starting Stage-1 training for %d epochs", args.epochs)
-        _stage1_loop(cfg, args.epochs, log_dir, data_root, stage1_file, stage25_file, load_path=load_path)
->>>>>>> Stashed changes
     else:
         logging.info("Preparing Stage-1 teacher for Stage-2.5 training")
         teacher_cfg = deepcopy(cfg)
@@ -1593,7 +1541,6 @@ def main() -> None:
         teacher_logdir = log_dir / "stage1_teacher"
         teacher = _stage1_loop(teacher_cfg, 1, teacher_logdir, data_root, stage1_file, stage25_file, load_path=load_path)
         scaler_path = getattr(teacher, "scaler_path", teacher_logdir / cfg.data.scaler_dir / "stage1" / "z5d_scaler.pkl")
-<<<<<<< Updated upstream
         logging.info("Starting Stage-2.5 training for %d epochs", cfg.train.epochs)
         _stage25_loop(
             cfg,
@@ -1605,10 +1552,6 @@ def main() -> None:
             stage25_file,
             scaler_path,
         )
-=======
-        logging.info("Starting Stage-2.5 training for %d epochs", args.epochs)
-        _stage25_loop(cfg, args.epochs, log_dir, teacher, data_root, stage1_file, stage25_file, scaler_path)
->>>>>>> Stashed changes
 
 
 if __name__ == "__main__":
