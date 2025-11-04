@@ -1,63 +1,67 @@
 {
-    "version": "2.0.0",
-    "tasks": [
-        {
-            "label": "Stage-1 M2 φ-gate diagnostics",
-            "type": "shell",
-            "command": "python",
-            "args": [
-                "-m",
-                "rss_da.train",
-                "--stage",
-                "1",
-                "--phase",
-                "pretrain_m2",
-                "--enable_m3",
-                "--epochs",
-                "3",
-                "--logdir",
-                "${workspaceFolder}/runs/vscode_m2_phi_gate",
-                "--log_level",
-                "INFO",
-                "--phi_gate_quantile",
-                "0.6",
-                "--phi_gate_min_keep",
-                "0.2"
-            ],
-            "options": {
-                "cwd": "${workspaceFolder}"
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Stage-1 φ-gated M3 finetuning",
-            "type": "shell",
-            "command": "python",
-            "args": [
-                "-m",
-                "rss_da.train",
-                "--stage",
-                "1",
-                "--phase",
-                "finetune_m3",
-                "--enable_m3",
-                "--m3_preset",
-                "phase3",
-                "--epochs",
-                "3",
-                "--logdir",
-                "${workspaceFolder}/runs/vscode_m3_finetune",
-                "--log_level",
-                "INFO",
-                "--phi_gate_quantile",
-                "0.6",
-                "--phi_gate_min_keep",
-                "0.2"
-            ],
-            "options": {
-                "cwd": "${workspaceFolder}"
-            },
-            "problemMatcher": []
-        }
-    ]
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Stage-1 M2 φ-gate diagnostics",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "-m",
+        "rss_da.train",
+        "--stage",
+        "1",
+        "--phase",
+        "pretrain_m2",
+        "--enable_m3",
+        "--epochs",
+        "3",
+        "--logdir",
+        "${workspaceFolder}/runs/vscode_m2_phi_gate",
+        "--log_level",
+        "INFO",
+        "--phi_gate_quantile",
+        "0.6",
+        "--phi_gate_min_keep",
+        "0.2",
+        "--data_root",
+        "${workspaceFolder}/rss_da/data/raw_data/standardized_v2"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Stage-1 φ-gated M3 finetuning",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "-m",
+        "rss_da.train",
+        "--stage",
+        "1",
+        "--phase",
+        "finetune_m3",
+        "--enable_m3",
+        "--m3_preset",
+        "phase3",
+        "--epochs",
+        "3",
+        "--logdir",
+        "${workspaceFolder}/runs/vscode_m3_finetune",
+        "--log_level",
+        "INFO",
+        "--phi_gate_quantile",
+        "0.6",
+        "--phi_gate_min_keep",
+        "0.2",
+        "--data_root",
+        "${workspaceFolder}/rss_da/data/raw_data/standardized_v2"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    }
+  ]
 }

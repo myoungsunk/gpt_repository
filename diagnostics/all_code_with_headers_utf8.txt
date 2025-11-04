@@ -18,3 +18,13 @@
 # File: C:\Users\Myoungsun Kim\Documents\GitHub\gpt_repos2\diagnostics\m3_diag.py
 ======================================================================
 
+
+======================================================================
+# File: C:\Users\Myoungsun Kim\Documents\GitHub\gpt_repository\diagnostics\first_check.py
+======================================================================
+
+
+======================================================================
+# File: C:\Users\Myoungsun Kim\Documents\GitHub\gpt_repository\diagnostics\m3_diag.py
+======================================================================
+
